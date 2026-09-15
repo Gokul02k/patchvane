@@ -1,0 +1,74 @@
+# Every push to main lands on the server.
+#
+# The script is piped in from the commit being deployed rather than run from
+# the server's own copy, because that copy is replaced halfway through the
+# run and bash reads a script as it goes.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one halfway: an interrupted restart
+# is how a site ends up down.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Does it still compile
+        run: python3 -m compileall -q serve.py collect.py providers.py aiclass.py vault.py redact.py netcheck.py
+
+      # In cloud mode, because that is what the server runs and it checks
+      # more: that HTTPS is required, and that a signing secret exists.
+      - name: Is the configuration still valid
+        env:
+          PATCHVANE_MODE: cloud
+          PATCHVANE_SECRET: only-for-this-check-not-a-real-secret-at-all
+        run: python3 serve.py --check
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update the server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.DEPLOY_HOST_KEY }}
+        run: |
+          set -euo pipefail
+
+          # Before there is a server to deploy to, say so and stop. A red
+          # cross on every push would only teach you to ignore it.
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "::notice::No DEPLOY_HOST secret yet, so there is nowhere to deploy. DEPLOY.md, step 5."
+            exit 0
+          fi
+
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+
+          if [ -n "$DEPLOY_HOST_KEY" ]; then
+            printf '%s\n' "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          else
+            echo "note: DEPLOY_HOST_KEY is not set, trusting the key on offer"
+            ssh-keyscan -T 10 "$DEPLOY_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -s' < deploy/update.sh

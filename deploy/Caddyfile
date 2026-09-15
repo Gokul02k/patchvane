@@ -1,0 +1,37 @@
+# TLS in front of Patchvane.
+#
+# Caddy gets a certificate from Let's Encrypt on first start and renews it
+# without being asked, which is the whole reason it is here: cloud mode
+# refuses to run without HTTPS, because the session cookie would otherwise
+# travel in the clear.
+#
+# The domain comes from /etc/caddy/patchvane.env so this file is the same on
+# every deployment.  Port 80 has to be reachable from the internet for the
+# certificate to be issued at all.
+
+{$PATCHVANE_DOMAIN} {
+	encode zstd gzip
+
+	# Patchvane reads the forwarded headers Caddy sets here: the client
+	# address is what the login rate limiter counts against, and getting it
+	# wrong would either count the whole internet as one caller or let five
+	# tries be five thousand.
+	reverse_proxy 127.0.0.1:8787 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/patchvane.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}

@@ -624,9 +624,32 @@ docs/         the logo, the banner and the screenshots this page shows
 tools/        how those are made: shots.py drives a headless browser over a
               throwaway instance, preview_readme.py renders this file the way
               GitHub will
+deploy/       systemd unit, Caddy configuration and the two scripts that
+              set up and update a server
 LICENSE       Apache License 2.0
 NOTICE        what the copyright covers, and the archives this reads
 ```
+
+## Putting it on the internet
+
+Everything above is a dashboard on your own machine. It also runs as a public
+service, where anybody signs in with their own address and gets a dashboard
+of their own patches, and nothing of yours has to stay switched on.
+
+[DEPLOY.md](DEPLOY.md) is the walk through: a free Oracle Cloud machine that
+does not expire or sleep, Caddy in front of it for a certificate that renews
+itself, and a push to `main` as the way to deploy. Setting it up is one
+script and about an hour, most of which is waiting for DNS.
+
+```bash
+sudo ./deploy/setup.sh your.domain
+```
+
+`PATCHVANE_MODE=cloud` is what changes underneath: the server binds outward,
+reads the address of whoever is really calling from the proxy in front of it,
+refuses to run without HTTPS or a signing secret, and keeps people signed in
+across a restart. `PATCHVANE_DATA_DIR` moves everything worth keeping out of
+the checkout, so a deploy can replace the code without touching the people.
 
 ## Licence
 

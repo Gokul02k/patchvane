@@ -53,6 +53,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = json.load(open(os.path.join(HERE, "config.json")))
 UA = CONFIG.get("user_agent", "patchvane/2.0")
 
+# The fetched pages are data, not code.  A deployment that keeps the checkout
+# read-only and pulls a new one over it needs them somewhere else, and the
+# same variable serve.py takes its data directory from decides where.  Unset,
+# which is every run from a clone, the cache sits beside the code as before.
+DATA_DIR = os.environ.get("PATCHVANE_DATA_DIR") or HERE
+
 # Whose patches this run is about, and where its answers go.  Both are
 # arguments rather than settings, because one server collects for everybody
 # who signs in and each of them gets their own directory.  The values in
@@ -60,7 +66,7 @@ UA = CONFIG.get("user_agent", "patchvane/2.0")
 ME = (os.environ.get("PATCHVANE_OWNER") or os.environ.get("MAINLINE_OWNER") or CONFIG.get("email") or "").lower()
 NAME = CONFIG.get("name") or ""
 OUT_DIR = HERE
-CACHE = os.path.join(HERE, "cache")
+CACHE = os.path.join(DATA_DIR, "cache")
 
 
 def working_for(email: str, name: str = "", out_dir: str = "") -> None:
@@ -76,7 +82,7 @@ def working_for(email: str, name: str = "", out_dir: str = "") -> None:
     # The fetch cache is shared: lore and patchwork answers are the same
     # whoever asked for them, and two people in the same subsystem would
     # otherwise fetch the same threads twice.
-    CACHE = os.path.join(HERE, "cache")
+    CACHE = os.path.join(DATA_DIR, "cache")
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(CACHE, exist_ok=True)
 
