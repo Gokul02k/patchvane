@@ -108,8 +108,10 @@ host does not fetch from lore several times over at once.
 The name you are greeted by comes from the `From:` line on your own patches,
 whichever form of it you use most often.
 
-A dashboard nobody has signed into for a fortnight stops being refreshed;
-signing in again resumes it. `PATCHVANE_KEEP_DAYS` changes that.
+The timer only collects for people who are signed in at the time. Sign out,
+or close the tab and leave it for `PATCHVANE_ACTIVE_MINUTES` (30 by default),
+and nothing further is fetched for that address until the next sign-in. Your
+collected data stays on disk and is waiting when you come back.
 
 ### Keeping it to particular people
 

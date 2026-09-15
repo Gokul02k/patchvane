@@ -230,6 +230,40 @@ RUNS_LOCK = threading.Lock()
 # name and cache under each other's address.  One at a time through here.
 COLLECT_MODULE_LOCK = threading.Lock()
 
+# Who is signed in right now.  The timer collects for these addresses and no
+# others, so nothing is fetched on behalf of somebody who is not here to read
+# it.  Sessions are stateless cookies with nothing kept server side, so being
+# signed in is measured here instead: by when a request last arrived carrying
+# a valid one.  Signing out, or going away for ACTIVE_MINUTES, ends it.
+ACTIVE = {}
+ACTIVE_LOCK = threading.Lock()
+ACTIVE_MINUTES = float(env("PATCHVANE_ACTIVE_MINUTES", "30") or 30)
+
+
+def touch_active(email: str) -> None:
+    """Note a request that arrived with a good session."""
+    who = (email or "").strip().lower()
+    if not who:
+        return
+    with ACTIVE_LOCK:
+        ACTIVE[who] = time.time()
+
+
+def drop_active(email: str) -> None:
+    """Forget somebody the moment they sign out."""
+    who = (email or "").strip().lower()
+    with ACTIVE_LOCK:
+        ACTIVE.pop(who, None)
+
+
+def active_people() -> list:
+    """Addresses with a live session, most recently seen first."""
+    cutoff = time.time() - ACTIVE_MINUTES * 60.0
+    with ACTIVE_LOCK:
+        for who in [w for w, when in ACTIVE.items() if when < cutoff]:
+            del ACTIVE[who]
+        return sorted(ACTIVE, key=lambda w: ACTIVE[w], reverse=True)
+
 
 def state_of(email: str) -> dict:
     """The last run for one person, created empty the first time."""
@@ -660,26 +694,20 @@ def ensure_collecting(email: str, why: str = "empty dashboard") -> bool:
 def due_for_collection() -> list:
     """Who to collect for next, most overdue first.
 
-    Everyone who has signed in, but only while they keep signing in: a
-    dashboard nobody has opened in a fortnight is not worth fetching for,
-    and the archives being polite about is a shared resource."""
-    keep = float(env("PATCHVANE_KEEP_DAYS", "14") or 14)
-    cutoff = time.time() - keep * 86400
+    Only addresses signed in at the moment.  The timer exists to keep a page
+    somebody is looking at current, so fetching for a dashboard nobody has
+    open would spend this host's politeness budget at lore and
+    git.kernel.org on nothing.  Having signed in once is not enough: the
+    session has to still be in use, which is what active_people() answers."""
     out = []
-    for card in known_people():
-        try:
-            seen = datetime.fromisoformat(card["seen"]).timestamp()
-        except Exception:
-            seen = 0
-        if seen < cutoff:
-            continue
-        run = state_of(card["email"])
+    for addr in active_people():
+        run = state_of(addr)
         last = run.get("last_run") or ""
         try:
             when = datetime.fromisoformat(last).timestamp() if last else 0
         except Exception:
             when = 0
-        out.append((when, card["email"]))
+        out.append((when, addr))
     out.sort()
     return [addr for _, addr in out]
 
@@ -1525,6 +1553,8 @@ class Handler(BaseHTTPRequestHandler):
         # holding the cookie, not a name in a config file.
         me = (sess or {}).get("u", "") if authed else ""
         run = state_of(me) if authed else {}
+        if authed:
+            touch_active(me)
 
         if path == "/healthz":
             self.json_out(200, {"ok": True, "app": APP, "mode": MODE,
@@ -1532,6 +1562,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/logout":
+            drop_active(me)
             self.redirect("/login", [self.set_cookie("", clear=True)])
             return
 
@@ -1684,6 +1715,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             log("signed in from %s as %s" % (self.client_ip(), quiet_addr(who)))
             remember_person(who)
+            touch_active(who)
             # Nothing collected for them yet.  Start now, in the background,
             # so the page can open and say what is happening instead of
             # hanging on a first collection.
@@ -1696,6 +1728,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json_out(401, {"ok": False, "error": "not signed in"})
             return
         me = sess.get("u", "")
+        touch_active(me)
 
         # A cross-site form post cannot set a custom header, so requiring one
         # is enough to stop another page driving this one.
@@ -2010,9 +2043,8 @@ def main() -> int:
     log("sign-in: %s, %s" % (sign_in_wants(), who_may()))
     people = known_people()
     if people:
-        log("collecting for %s" % ", ".join(quiet_addr(p["email"])
-                                            for p in people[:6])
-            + (" and %d more" % (len(people) - 6) if len(people) > 6 else ""))
+        log("%d dashboard(s) on disk; collecting only for whoever is signed in"
+            % len(people))
     for w in cautions():
         log("caution: %s" % w)
     log("privacy: %s" % ", ".join(policy().describe()))
