@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/database-none-A371F7?style=for-the-badge&labelColor=0D1119" alt="No database">
   <img src="https://img.shields.io/badge/sources-public%20archives-E3A008?style=for-the-badge&labelColor=0D1119" alt="Public sources only">
   <img src="https://img.shields.io/badge/Linux%20%C2%B7%20WSL%20%C2%B7%20macOS-2DD4BF?style=for-the-badge&logo=linux&logoColor=white&labelColor=0D1119" alt="Linux, WSL and macOS">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache%202.0-7C5CFF?style=for-the-badge&labelColor=0D1119" alt="Apache License 2.0"></a>
 </p>
 
 <p>
@@ -623,4 +624,21 @@ docs/         the logo, the banner and the screenshots this page shows
 tools/        how those are made: shots.py drives a headless browser over a
               throwaway instance, preview_readme.py renders this file the way
               GitHub will
+LICENSE       Apache License 2.0
+NOTICE        what the copyright covers, and the archives this reads
 ```
+
+## Licence
+
+Apache License 2.0. The terms are in [LICENSE](LICENSE); [NOTICE](NOTICE)
+says what the copyright covers and which public archives Patchvane reads
+without owning.
+
+Apache rather than a shorter permissive licence for one reason: section 3
+grants a patent licence in so many words, so anybody building on Patchvane
+knows where they stand instead of having to infer it from silence, and that
+grant falls away for anybody who turns round and sues over patents in it.
+
+[SECURITY.md](SECURITY.md) is where a vulnerability goes, which is not a
+public issue. [CONTRIBUTING.md](CONTRIBUTING.md) is what a change should look
+like before it is sent.

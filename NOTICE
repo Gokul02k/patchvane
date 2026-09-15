@@ -1,0 +1,17 @@
+Patchvane
+Copyright 2026 Hemanth Selam
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the terms.
+
+This product bundles no third-party code. It runs on the Python standard
+library and ships no vendored dependency, so there is nothing else here whose
+copyright belongs to somebody else.
+
+At run time it reads public archives that are not part of this work and carry
+their own terms:
+
+  lore.kernel.org        public mailing list archives
+  patchwork.kernel.org   patch state, via its REST API
+  git.kernel.org         whether a commit reached a tree
+
+Patchvane only reads them. It posts nothing, and writes nothing back.

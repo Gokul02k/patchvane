@@ -1,0 +1,14 @@
+# Text is text everywhere, whatever the machine checking it out does by
+# default.  A CRLF in run.sh is a shell that will not start.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+
+# The screenshots and the drawn assets are documentation, not the project:
+# keep them out of the language bar and out of a diff nobody can read.
+docs/** linguist-documentation
+*.svg -diff linguist-documentation
+
+# The license is quoted verbatim and is nobody's code.
+LICENSE linguist-vendored
