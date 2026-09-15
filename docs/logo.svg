@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128"
+     role="img" aria-label="Patchvane">
+  <title>Patchvane</title>
+  <defs>
+    <linearGradient id="face" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4c8dff"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <rect width="128" height="128" rx="34" fill="url(#face)"/>
+  <rect width="128" height="128" rx="34" fill="url(#sheen)"/>
+
+  <!-- the list: where every patch starts -->
+  <path d="M26 94h76" stroke="#fff" stroke-width="10" stroke-linecap="round" opacity=".95"/>
+
+  <!-- the climb: posted, reviewed, accepted, landed -->
+  <path d="M44 94c0-29 16-38 41-38" stroke="#dce9ff" stroke-width="10"
+        stroke-linecap="round" fill="none"/>
+
+  <!-- mainline -->
+  <circle cx="93" cy="40" r="15" fill="#fff" opacity=".35" filter="url(#soft)"/>
+  <circle cx="93" cy="40" r="12" fill="#fff"/>
+</svg>

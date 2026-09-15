@@ -20,3 +20,8 @@ data.json
 notes.json
 dashboard.html
 secrets.json*
+
+# Renders written by tools/preview_readme.py and tools/render_svg.py.
+_preview-*.html
+docs/_preview-*.png
+docs/_check-*.png

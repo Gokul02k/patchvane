@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 300" width="820" height="300"
+     role="img" aria-label="A first run of Patchvane in a terminal">
+  <title>./run.sh on a fresh clone</title>
+
+  <defs>
+    <style>
+      .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                        Consolas, "DejaVu Sans Mono", monospace; font-size: 15px; }
+      .dim  { fill: #7d8590; }
+      .ink  { fill: #e8edf5; }
+      .ok   { fill: #3fb950; }
+      .blue { fill: #4c8dff; }
+      .cyan { fill: #2dd4bf; }
+    </style>
+    <clipPath id="typed"><rect x="40" y="52" width="0" height="22">
+      <animate attributeName="width"
+               values="0;9;18;27;36;45;54;63;72"
+               keyTimes="0;.022;.044;.067;.089;.111;.133;.156;.178"
+               calcMode="discrete" dur="9s" repeatCount="indefinite"/>
+    </rect></clipPath>
+  </defs>
+
+  <rect width="820" height="300" rx="14" fill="#12161f" stroke="#232b39" stroke-width="2"/>
+  <path d="M0 14a14 14 0 0 1 14-14h792a14 14 0 0 1 14 14v24H0z" fill="#1a202c"/>
+  <line x1="0" y1="38" x2="820" y2="38" stroke="#232b39" stroke-width="2"/>
+  <circle cx="26" cy="19" r="5.5" fill="#f85149"/>
+  <circle cx="47" cy="19" r="5.5" fill="#e3a008"/>
+  <circle cx="68" cy="19" r="5.5" fill="#3fb950"/>
+  <text class="m dim" x="410" y="24" font-size="13" text-anchor="middle">patchvane</text>
+
+  <g class="m">
+    <text class="ok" x="24" y="69">$</text>
+    <g clip-path="url(#typed)">
+      <text class="ink" x="40" y="69">./run.sh</text>
+    </g>
+    <rect y="55" width="9" height="19" fill="#4c8dff">
+      <animate attributeName="x"
+               values="40;49;58;67;76;85;94;103;112"
+               keyTimes="0;.022;.044;.067;.089;.111;.133;.156;.178"
+               calcMode="discrete" dur="9s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;.4;.7;1"
+               dur=".9s" repeatCount="indefinite"/>
+    </rect>
+
+    <text class="dim" x="24" y="105" opacity="0">Wrote .env from .env.example.
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.222;.252;.93;1" dur="9s" repeatCount="indefinite"/>
+    </text>
+    <text class="dim" x="24" y="131" opacity="0">Generated a PATCHVANE_SECRET in .env.
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.267;.297;.93;1" dur="9s" repeatCount="indefinite"/>
+    </text>
+
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.333;.363;.93;1" dur="9s" repeatCount="indefinite"/>
+      <text class="ink" x="24" y="165">Patchvane is running (pid 41207) on <tspan
+            class="cyan">http://127.0.0.1:8787/</tspan></text>
+    </g>
+
+    <text class="dim" x="24" y="199" font-size="14" opacity="0" xml:space="preserve">  ./run.sh --log     follow the log (patchvane.log)
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.389;.419;.93;1" dur="9s" repeatCount="indefinite"/>
+    </text>
+    <text class="dim" x="24" y="221" font-size="14" opacity="0" xml:space="preserve">  ./run.sh --stop    stop it
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.422;.452;.93;1" dur="9s" repeatCount="indefinite"/>
+    </text>
+
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0"
+               keyTimes="0;.50;.55;.93;1" dur="9s" repeatCount="indefinite"/>
+      <text class="blue" x="24" y="262" font-size="14">&#9679; collecting from lore for the address you sign in with</text>
+    </g>
+  </g>
+</svg>

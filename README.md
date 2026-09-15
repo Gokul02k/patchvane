@@ -1,4 +1,25 @@
-# Patchvane
+<div align="center">
+
+<img src="docs/banner.svg" alt="Patchvane" width="100%">
+
+<p>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-4C8DFF?style=for-the-badge&logo=python&logoColor=white&labelColor=0D1119" alt="Python 3.10 or newer">
+  <img src="https://img.shields.io/badge/dependencies-none-3FB950?style=for-the-badge&labelColor=0D1119" alt="No dependencies">
+  <img src="https://img.shields.io/badge/database-none-A371F7?style=for-the-badge&labelColor=0D1119" alt="No database">
+  <img src="https://img.shields.io/badge/sources-public%20archives-E3A008?style=for-the-badge&labelColor=0D1119" alt="Public sources only">
+  <img src="https://img.shields.io/badge/Linux%20%C2%B7%20WSL%20%C2%B7%20macOS-2DD4BF?style=for-the-badge&logo=linux&logoColor=white&labelColor=0D1119" alt="Linux, WSL and macOS">
+</p>
+
+<p>
+  <a href="#running-it"><b>Run it</b></a> &nbsp;&#183;&nbsp;
+  <a href="#a-look-at-it"><b>Look at it</b></a> &nbsp;&#183;&nbsp;
+  <a href="#signing-in"><b>Signing in</b></a> &nbsp;&#183;&nbsp;
+  <a href="#the-seven-sections"><b>The seven sections</b></a> &nbsp;&#183;&nbsp;
+  <a href="#the-assistant"><b>The assistant</b></a> &nbsp;&#183;&nbsp;
+  <a href="#configuring"><b>Configuring</b></a>
+</p>
+
+</div>
 
 An upstream patch tracker. It follows every patch you posted to a kernel
 mailing list from the moment it went out to the moment it lands in Linus'
@@ -9,7 +30,84 @@ submission directory: copy this folder to any machine with Python 3 and an
 internet connection and it works. Nothing outside the standard library is
 needed.
 
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### &#128225; It watches
+
+Every list you post to, read straight from the public lore archives. No
+mailbox to keep, no folder to point it at.
+
+</td>
+<td width="33%" valign="top">
+
+### &#127937; It follows
+
+Posted, reviewed, accepted, into linux-next, into mainline. Each patch is in
+exactly one bucket, and the buckets add up.
+
+</td>
+<td width="33%" valign="top">
+
+### &#128233; It nudges
+
+The threads waiting on a reply from you, and the series that need another
+version, on their own page.
+
+</td>
+</tr>
+</table>
+
+## A look at it
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/shot-light.png">
+  <source media="(prefers-color-scheme: dark)"  srcset="docs/shot-dashboard.png">
+  <img src="docs/shot-dashboard.png" alt="The overview page" width="900">
+</picture>
+
+<sub>The overview: where everything stands today.</sub>
+
+</div>
+
+<details>
+<summary><b>&#127988; Your turn</b> &#8212; the threads waiting on a reply, and the series to respin</summary>
+<br>
+<img src="docs/shot-your-turn.png" alt="The your turn page" width="100%">
+</details>
+
+<details>
+<summary><b>&#128203; Patches</b> &#8212; every patch you ever posted, and where each one got to</summary>
+<br>
+<img src="docs/shot-patches.png" alt="The patches page" width="100%">
+</details>
+
+<details>
+<summary><b>&#128200; Insights</b> &#8212; when you post, which subsystems, which trees</summary>
+<br>
+<img src="docs/shot-insights.png" alt="The insights page" width="100%">
+</details>
+
+<details>
+<summary><b>&#9728; In the light</b> &#8212; the same page in the other theme, on <code>t</code></summary>
+<br>
+<img src="docs/shot-light.png" alt="The overview page in the light theme" width="100%">
+</details>
+
+<details>
+<summary><b>&#128274; Signing in</b> &#8212; an address and an app password, and nothing else to set up</summary>
+<br>
+<img src="docs/shot-login.png" alt="The sign-in page" width="100%">
+</details>
+
 ## Running it
+
+<div align="center">
+  <img src="docs/terminal.svg" alt="A first run: ./run.sh writes .env, generates the secret and starts the server" width="820">
+</div>
 
 ```bash
 cd patchvane
@@ -521,4 +619,8 @@ requirements.txt  empty on purpose: the standard library is the whole of it
 cache/        fetched responses, safe to delete
 people/       one directory per signed-in address: their patches, their notes
               and their own encrypted vault.json of API keys (mode 0600)
+docs/         the logo, the banner and the screenshots this page shows
+tools/        how those are made: shots.py drives a headless browser over a
+              throwaway instance, preview_readme.py renders this file the way
+              GitHub will
 ```
