@@ -1,0 +1,35 @@
+# Patchvane on Render's free plan, which is the one host left that does not
+# ask for a card.
+#
+# Point Render at this file (Blueprint) rather than filling the form in by
+# hand, and it asks only for the three values it cannot guess.
+
+services:
+  - type: web
+    name: patchvane
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # A push to main is a deploy.
+    autoDeploy: true
+    # No healthCheckPath on purpose.  Cloud mode answers a plain HTTP request
+    # with a redirect to HTTPS, and Render's health check does not send the
+    # forwarded-protocol header that would tell it otherwise, so a check here
+    # would fail a service that is working perfectly well.  Render watches
+    # the port instead.
+    envVars:
+      # Signs session cookies and seals the vaults.  Set it once and keep it:
+      # change it and every stored key becomes unreadable.
+      - key: PATCHVANE_SECRET
+        sync: false
+      # yourname/patchvane-data, the private repository the data lives in.
+      - key: PATCHVANE_DATA_REPO
+        sync: false
+      # The deploy key for that repository, base64 on one line.
+      - key: PATCHVANE_DATA_KEY
+        sync: false
+      # The free plan has no disk that survives anything, and Render restarts
+      # free services whenever it likes, so snapshot more often than the
+      # ten-minute default.
+      - key: PATCHVANE_SNAPSHOT_MINUTES
+        value: "5"

@@ -9,36 +9,49 @@ There are two ways to do it and both are free. They differ in one thing that
 turns out to matter more than anything technical: whether you have to hand a
 card over to get started.
 
-| | Northflank | Oracle Cloud |
+| | Render | Oracle Cloud |
 |---|---|---|
 | Card to sign up | no | yes, verified and not charged |
-| Sleeps when quiet | no | no |
+| Stops when quiet | after 15 minutes, see below | no |
 | Disk that survives a restart | no, see below | yes, a real one |
 | What you get | a container and an HTTPS URL | a machine you are root on |
 
-Most of the usual names are out before this choice is made. Render sleeps a
-free service after fifteen minutes of quiet, which stops the collection timer
-that is the point of the thing. Fly and Koyeb want a card anyway. Vercel,
-Netlify and Cloudflare Pages host frontends; Vercel's own documentation says
-that if you need a server up all day you want a VM, and on their free plan a
-scheduled job may run once a day when Patchvane wants to collect every few
+Almost nothing is left in the first column, and it is worth saying why so
+that nobody spends an afternoon rediscovering it. **Northflank, Koyeb and
+Fly all want a card**; Northflank's billing documentation is explicit that
+every user must add a payment method before creating anything, free plan or
+not. **Hugging Face** now requires a paid plan to create a Docker Space.
+**Vercel, Netlify and Cloudflare Pages** host frontends: Vercel's own docs
+say that if you need a server up all day you want a VM, and their free
+scheduled jobs run once a day where Patchvane wants to collect every few
 minutes.
 
-Northflank's free tier has no persistent disk, which for this application is
-not a detail: the patches can be collected again from lore, slowly, but the
-notes people wrote and the keys in their vaults cannot. So on that route the
-data directory is a git repository that is restored when the container starts
-and snapshotted while it runs. That is what `deploy/cloud-entrypoint.sh` is
-for, and route A sets it up.
+The card is not really about money. It is the thing that stops one person
+signing up ten thousand times to mine cryptocurrency, and a host that gives
+away always-on compute without one does not stay in business. Oracle never
+charges an Always Free account, so if a card is available at all, route B is
+the better system by some distance. It rejects RuPay, prepaid and virtual
+cards, though, which is a wall rather than a price.
 
-If you have a Visa or Mastercard and do not mind Oracle verifying it, route B
-is the simpler system and the one with a real disk. Oracle does not charge an
-Always Free account, but it rejects RuPay, prepaid and virtual cards, which
-is a wall rather than a cost.
+Route A takes the two things Render's free plan does not give you and works
+around both.
+
+**No disk.** Nothing written survives a restart, and for this application
+that is not a detail: the patches can be collected from lore again, slowly,
+but the notes people wrote and the keys in their vaults cannot. So the data
+directory is a git repository, restored from a private repository when the
+container starts and snapshotted while it runs. That is what
+`deploy/cloud-entrypoint.sh` does.
+
+**Sleep.** Render stops a free service after fifteen minutes with no traffic,
+and a stopped Patchvane collects for nobody. So `.github/workflows/keep-
+awake.yml` knocks on the door every few minutes. The hours that uses are
+hours Render grants — 750 a month against 744 in the longest month — which
+fits, and fits with almost nothing spare, so keep to one free service.
 
 ---
 
-# Route A: Northflank, with no card
+# Route A: Render, with no card
 
 You need a GitHub account and nothing else.
 
@@ -83,18 +96,21 @@ than overwriting what is saved, but it stops saving.
 
 ## 3. The service
 
-Sign in to [northflank.com](https://northflank.com) with GitHub and make a
-project. Then **Create new**, **Service**, **Combined service**.
+Sign in to [render.com](https://render.com) with GitHub. Then **New**,
+**Blueprint**, and point it at your `patchvane` repository.
 
-- **Repository**: your `patchvane` repository, branch `main`.
-- **Build**: Dockerfile, path `/Dockerfile`. The one in this repository.
-- **Build on push**: on. This is what makes a push a deploy.
-- **Resources**: the free plan. The sandbox allows two always-on services.
-- **Networking**: port `8000`, protocol HTTP, and make it public.
+`render.yaml` in this repository describes the whole service — Docker build,
+free plan, deploy on push — so the only thing Render asks you for is the
+three values it cannot guess. If you would rather fill the form in by hand,
+**New**, **Web Service**, pick the repository, choose **Docker** and the
+**Free** plan, and leave the health check path empty: cloud mode answers a
+plain HTTP request with a redirect to HTTPS, and Render's checker does not
+send the header that would tell it otherwise, so it would fail a service that
+is perfectly healthy.
 
 ## 4. What it needs to know
 
-Under the service's **Environment**, add these. Mark the last two as secrets.
+Render prompts for these from `render.yaml`. Mark the first and last secret.
 
 | Variable | Value |
 |---|---|
@@ -121,8 +137,8 @@ not public.
 
 ## 5. Watch it come up
 
-Northflank builds the image, runs it, and gives you a URL ending in
-`.code.run` with a certificate already on it. In the logs you want:
+Render builds the image, runs it, and gives you a URL ending in
+`.onrender.com` with a certificate already on it. In the logs you want:
 
 ```
 [entrypoint] the data remote is empty; this run will make the first snapshot
@@ -143,21 +159,31 @@ it serves without saving and says so, rather than replacing somebody's vault
 with an empty directory. The state it booted with stays on a `previous`
 branch, so there is one step back if a run loses something.
 
-## 6. Your own domain, if you want one
+## 6. Keep it awake
 
-Free accounts get the `.code.run` URL and that is a real HTTPS address you
-can give people. To use your own name instead, add it under the service's
-**Domains**, then add the CNAME record Northflank shows you at your
-registrar.
+Copy the `.onrender.com` address. In your `patchvane` repository on GitHub,
+**Settings**, **Secrets and variables**, **Actions**, the **Variables** tab,
+**New repository variable**: name `PATCHVANE_URL`, value the address with no
+trailing slash.
+
+That is what the `keep awake` workflow looks for. Until it exists the
+workflow runs and says there is nothing to keep awake; once it does, Render
+stops putting the service to sleep. Custom domains work on the free plan too,
+under the service's **Settings**.
 
 ## What this route costs you
 
 A restart between snapshots loses up to `PATCHVANE_SNAPSHOT_MINUTES` of work,
-which is a few patches that will be collected again. The fetch cache is not
+a few patches that will be collected again. The fetch cache is not
 snapshotted, because it is tens of megabytes and rebuilds itself, so the
-first collection after a deploy is slower than the ones after it. Northflank
-says the sandbox tier is for testing rather than production, and they are the
-ones who decide what that means later.
+first collection after a deploy is slower than the ones after it.
+
+Two of Render's rules are worth reading properly rather than discovering.
+They may suspend a free service that sends an uncommonly high volume of
+traffic out to the internet, and collecting from lore is exactly that kind of
+traffic, in moderation. And they say plainly that free instances are not for
+production. Both are their call to make later, which is the real difference
+between this route and having a machine of your own.
 
 ---
 
@@ -297,7 +323,7 @@ interval. Five sign-in attempts per address per five minutes, 120 API calls a
 minute.
 
 To keep it to yourself instead, set `PATCHVANE_ALLOW_EMAILS` to your own
-address — in the service's environment on Northflank, or in
+address — in the service's environment on Render, or in
 `/etc/patchvane/patchvane.env` on Oracle — and restart.
 
 ## What you are holding for other people

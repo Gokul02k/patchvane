@@ -3,8 +3,8 @@
 # Start Patchvane on a host that gives you a container and takes the disk
 # away again.
 #
-# Northflank's free tier, and every other free tier worth having, has no
-# persistent volume: the filesystem is new on every deploy and every restart.
+# Render's free plan, and every other free tier that does not ask for a card,
+# has no persistent disk: the filesystem is new on every deploy and restart.
 # Patchvane can rebuild what it collected from lore, slowly, but it cannot
 # rebuild the two things that are actually somebody's: the notes they wrote
 # and the API keys in their vault.  Losing those on every push is not a

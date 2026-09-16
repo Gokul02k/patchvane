@@ -1,0 +1,56 @@
+# Render's free plan stops a service after fifteen minutes with nothing
+# coming in, and a stopped Patchvane is not collecting for anybody.  This
+# knocks on the door often enough that it stays up.
+#
+# The hours this uses are hours Render grants: 750 a month, against 744 in
+# the longest month.  It fits, and it fits with almost nothing spare, so keep
+# to one free service in the workspace.
+#
+# It does nothing at all until the PATCHVANE_URL variable exists, so it is
+# quiet in a fork and quiet before there is anything to keep awake.
+
+name: keep awake
+
+on:
+  schedule:
+    # Ten minutes, and each run knocks twice, because GitHub runs scheduled
+    # jobs late when it is busy and a fifteen-minute gap is all it takes.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: keep-awake
+  cancel-in-progress: false
+
+jobs:
+  knock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Knock, wait, knock again
+        env:
+          URL: ${{ vars.PATCHVANE_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::notice::No PATCHVANE_URL variable set, so there is"\
+                 "nothing to keep awake yet. Add it under Settings,"\
+                 "Secrets and variables, Actions, Variables."
+            exit 0
+          fi
+
+          knock() {
+            code=$(curl -sS --max-time 90 -o /dev/null -w '%{http_code}' \
+                   -H 'X-Forwarded-Proto: https' "$URL/healthz" || echo 000)
+            echo "$(date -u '+%H:%M:%SZ')  $URL/healthz -> $code"
+          }
+
+          # A cold start takes about a minute, so the first knock after a
+          # sleep is slow rather than failed.  Neither knock is allowed to
+          # fail the job: the site being briefly down is not something this
+          # workflow can fix, and a red mark every ten minutes teaches
+          # everybody to ignore it.
+          knock
+          sleep 300
+          knock

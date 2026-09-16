@@ -637,11 +637,12 @@ service, where anybody signs in with their own address and gets a dashboard
 of their own patches, and nothing of yours has to stay switched on.
 
 [DEPLOY.md](DEPLOY.md) is the walk through, and offers two free routes. One
-is a container on Northflank, which needs no card to sign up for: the
-`Dockerfile` here builds it, a push to `main` rebuilds it, and because that
-tier has no disk that survives a restart, the data directory is kept in a
-private git repository and restored when the container comes back. The other
-is an Oracle Cloud machine with a real disk, Caddy in front of it for a
+is a container on Render, the last host that asks for no card at all: the
+`Dockerfile` here builds it, a push to `main` rebuilds it, and the two things
+that plan does not give you are worked around — the data directory lives in a
+private git repository because nothing on disk survives a restart, and a
+scheduled workflow keeps knocking so the service is never put to sleep. The
+other is an Oracle Cloud machine with a real disk, Caddy in front of it for a
 certificate that renews itself, and one script to set it all up.
 
 ```bash
