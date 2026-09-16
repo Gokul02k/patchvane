@@ -51,19 +51,35 @@ create it empty — no README, no licence. The first snapshot will fill it.
 Private matters. Vaults are sealed before they are written, but publishing
 other people's sealed keys is not a thing to do on purpose.
 
-## 2. A token that can write to it, and nothing else
+## 2. Something that can write to it, and to nothing else
 
-**Settings**, **Developer settings**, **Personal access tokens**,
-**Fine-grained tokens**, **Generate new token**.
+A **deploy key** is the better of the two ways, because it reaches exactly
+one repository, cannot read anything else in the account, and does not expire
+on a date nobody wrote down. Make one:
 
-- **Repository access**: only select repositories, and select only
-  `patchvane-data`.
-- **Permissions**: **Contents**, read and write. Nothing else.
-- **Expiration**: if you set one, the snapshots stop on that day. Patchvane
-  will say so in its log and will keep serving rather than overwrite what is
-  already saved, but it stops saving. Put the date in your calendar.
+```bash
+ssh-keygen -t ed25519 -N "" -C "patchvane-data snapshots" -f ~/.patchvane-deploy/data_key
+```
 
-Copy the token now; GitHub shows it once.
+In `patchvane-data` on GitHub, **Settings**, **Deploy keys**, **Add deploy
+key**. Paste the contents of `~/.patchvane-deploy/data_key.pub`, and tick
+**Allow write access**. Without that tick it can read the snapshot and never
+make one.
+
+The private half goes to the host in step 4. Hosting panels are unreliable
+about multi-line values, so hand it over as one line:
+
+```bash
+base64 -w0 < ~/.patchvane-deploy/data_key
+```
+
+`PATCHVANE_DATA_KEY` takes either that or the key itself.
+
+**Or a token instead.** If you would rather, a fine-grained personal access
+token scoped to only `patchvane-data` with **Contents: read and write** works
+the same way, as `PATCHVANE_DATA_TOKEN`. It expires, though, and on that day
+the snapshots stop — Patchvane says so in its log and keeps serving rather
+than overwriting what is saved, but it stops saving.
 
 ## 3. The service
 
@@ -84,7 +100,7 @@ Under the service's **Environment**, add these. Mark the last two as secrets.
 |---|---|
 | `PATCHVANE_SECRET` | 48 random characters, see below |
 | `PATCHVANE_DATA_REPO` | `yourname/patchvane-data` |
-| `PATCHVANE_DATA_TOKEN` | the fine-grained token from step 2 |
+| `PATCHVANE_DATA_KEY` | the deploy key from step 2, or `PATCHVANE_DATA_TOKEN` if you made a token |
 
 The secret signs session cookies and seals the vaults, so make it properly
 random and keep it:

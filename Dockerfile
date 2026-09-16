@@ -10,7 +10,7 @@ FROM python:3.12-slim
 # Certificates to read lore over HTTPS, git to keep the data, and nothing
 # else worth carrying.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git curl \
+ && apt-get install -y --no-install-recommends ca-certificates git curl openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --create-home --home-dir /home/patchvane patchvane

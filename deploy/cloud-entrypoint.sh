@@ -27,6 +27,7 @@ PORT="${PORT:-8000}"
 EVERY="${PATCHVANE_SNAPSHOT_MINUTES:-10}"
 REPO="${PATCHVANE_DATA_REPO:-}"
 TOKEN="${PATCHVANE_DATA_TOKEN:-}"
+KEY="${PATCHVANE_DATA_KEY:-}"
 # Anything git can push to. Set it and the two above are not needed, which is
 # what makes this testable without a GitHub repository to hand.
 REMOTE="${PATCHVANE_DATA_REMOTE:-}"
@@ -38,12 +39,49 @@ say() { echo "[entrypoint] $*"; }
 remote_url() {
 	if [ -n "$REMOTE" ]; then
 		printf '%s' "$REMOTE"
+	elif [ -n "$KEY" ]; then
+		printf 'git@github.com:%s.git' "$REPO"
 	else
 		printf 'https://x-access-token:%s@github.com/%s.git' "$TOKEN" "$REPO"
 	fi
 }
 
-keeping() { [ -n "$REMOTE" ] || { [ -n "$REPO" ] && [ -n "$TOKEN" ]; }; }
+keeping() {
+	[ -n "$REMOTE" ] || { [ -n "$REPO" ] && { [ -n "$TOKEN" ] || [ -n "$KEY" ]; }; }
+}
+
+# A deploy key is the better of the two ways in: it reaches exactly one
+# repository, it cannot be used to read anything else in the account, and
+# unlike a token it does not quietly expire on a date nobody wrote down.
+# Hosting panels are unreliable about newlines in a multi-line value, so a
+# base64 blob on one line is accepted as well as the key itself.
+use_key() {
+	[ -n "$KEY" ] || return 0
+	mkdir -p "$HOME/.ssh"
+	chmod 700 "$HOME/.ssh"
+
+	if printf '%s' "$KEY" | grep -q 'BEGIN .*PRIVATE KEY'; then
+		printf '%s\n' "$KEY" > "$HOME/.ssh/data_key"
+	else
+		printf '%s' "$KEY" | tr -d ' \n' | base64 -d > "$HOME/.ssh/data_key" 2>/dev/null
+	fi
+	chmod 600 "$HOME/.ssh/data_key"
+
+	if ! grep -q 'BEGIN .*PRIVATE KEY' "$HOME/.ssh/data_key" 2>/dev/null; then
+		say "PATCHVANE_DATA_KEY is not a private key. Nothing will be saved."
+		KEY=""
+		return 1
+	fi
+
+	# github.com's own host key, so the first connection is not trusted
+	# blindly.  If GitHub ever rotates this, the snapshots stop rather than
+	# talk to whoever answered.
+	printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+		> "$HOME/.ssh/known_hosts"
+	chmod 600 "$HOME/.ssh/known_hosts"
+
+	export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/data_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+}
 
 # A snapshot is a force push, so it can destroy as easily as it can save.  It
 # is only allowed once this run has established that it holds what the remote
@@ -137,6 +175,7 @@ snapshot() {
 }
 
 if keeping; then
+	use_key
 	restore
 	ensure_ignores
 else
