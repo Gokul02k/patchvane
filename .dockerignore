@@ -1,0 +1,17 @@
+# The image is code.  Everything a run produced stays out of it.
+.git
+.github
+people/
+cache/
+*.log
+.patchvane.pid
+.env
+secrets.json*
+data.json
+notes.json
+dashboard.html
+__pycache__/
+*.pyc
+
+# The screenshots are for the README and are a megabyte and a half.
+docs/
