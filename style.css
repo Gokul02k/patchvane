@@ -975,7 +975,13 @@ ul.tight li::before { content: "\2022"; position: absolute; left: 0;
 
 /* ------------------------------------------------------- the model picker */
 
-.aiform { display: flex; flex-direction: column; gap: 8px; }
+/* This turns the form into a column so the model picker can sit above the
+   box.  The rule it overrides set align-items: flex-end to line the send
+   button up with the bottom of a growing textarea, and in a column that
+   stops meaning "bottom" and starts meaning "right", which shrinks the row
+   to its content and pins it to the edge.  Stretch, then, and let .airow do
+   its own aligning. */
+.aiform { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .airow { display: flex; gap: 9px; align-items: flex-end; }
 .aipicker:empty { display: none; }
 .picker { position: relative; }
@@ -1059,9 +1065,23 @@ button.link:hover { text-decoration: underline; }
   border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); }
 
 @media (max-width: 960px) {
-  .loginpage { grid-template-columns: 1fr; gap: 30px; padding: 30px 22px; }
+  .loginpage { grid-template-columns: 1fr; gap: 26px; padding: 34px 22px; }
   .loginside h1 { font-size: 27px; }
-  .loginside p, .loginfacts { display: none; }
+  .loginside p { display: none; }
+}
+
+/* On a phone the page is asking a stranger for a Google app password, which
+   is the moment the three reassurances underneath it are worth most.  They
+   used to be hidden along with the paragraph; the paragraph is the part
+   nobody reads twice, so only that goes. */
+@media (max-width: 680px) {
+  .loginpage { min-height: 100dvh; align-content: start; gap: 20px;
+    padding: 26px 16px calc(26px + env(safe-area-inset-bottom, 0px)); }
+  .loginside { max-width: none; }
+  .loginside .logo { margin-bottom: 20px; }
+  .loginside h1 { font-size: 24px; }
+  .loginfacts { margin-top: 16px; }
+  .loginbox { padding: 20px 17px; }
 }
 
 /* --------------------------------------------------------------- narrow */
@@ -1077,6 +1097,101 @@ button.link:hover { text-decoration: underline; }
   .hero { flex-direction: column; align-items: flex-start; }
   .ttl p, .uname, .stamp i { display: none; }
   .content { padding: 14px; }
+}
+
+/* ----------------------------------------------------------------- phone
+   A column of icons down the left is a tablet idea.  On a phone it spends
+   a sixth of the width on navigation, at the end of the screen furthest
+   from a thumb, and what it pushes off the other side is the account menu.
+   So below this width the rail lies down along the bottom instead, and the
+   top bar keeps only what fits. */
+@media (max-width: 680px) {
+  .shell { grid-template-columns: 1fr; height: auto; min-height: 100dvh; }
+
+  .sidebar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    flex-direction: row; padding: 0; overflow: visible;
+    border-right: 0; border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg-2) 94%, transparent);
+    backdrop-filter: blur(12px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .sidebar .logo { display: none; }
+
+  nav { flex-direction: row; width: 100%; gap: 0; }
+  .navitem {
+    flex: 1 1 0; min-width: 0; height: 54px; padding: 0;
+    justify-content: center; border-radius: 0;
+  }
+  .navitem .ico { font-size: 18px; opacity: 1; }
+  .navitem.active { background: transparent; color: var(--blue); }
+  /* The marker moves to the top edge of the bar, where it reads as a tab
+     rather than as a bookmark hanging off the side. */
+  .navitem.active::before {
+    left: 22%; right: 22%; top: 0; bottom: auto; width: auto; height: 2px;
+    border-radius: 0 0 3px 3px;
+    background: linear-gradient(90deg, var(--blue), var(--cyan));
+  }
+
+  /* Clear of the bar, and of whatever the phone puts below it. */
+  .content { padding: 13px 13px calc(68px + env(safe-area-inset-bottom, 0px)); }
+
+  .topbar { padding: 0 12px; gap: 7px; }
+  .ttl { min-width: 0; }
+  .ttl h1 { font-size: 17px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  /* When it was last collected is worth a line in the page, not a third of
+     the top bar. */
+  .stamp { display: none; }
+  .aibtn { width: 38px; height: 38px; padding: 0; justify-content: center; }
+  .aibtn .btnlb { display: none; }
+  .usermenu { padding: 3px; gap: 0; }
+  .usermenu .dots { display: none; }
+  .who { padding: 0; }
+  .avatar { width: 32px; height: 32px; font-size: 13px; }
+
+  /* Forty pixels is about a fingertip.  Thirty-four is a near miss that
+     people blame themselves for. */
+  .iconbtn { width: 38px; height: 38px; }
+  .iconbtn.sm { width: 34px; height: 34px; }
+
+  /* A table squeezed into 390px gives a patch title a column four words
+     tall.  Let the columns keep a width worth reading and let the wrapper
+     scroll, which is the one place sideways scrolling is the right answer. */
+  .tablewrap { -webkit-overflow-scrolling: touch; }
+  .tablewrap table { min-width: 540px; }
+  thead th, tbody td { padding-left: 11px; padding-right: 11px; }
+
+  .hero { padding: 18px 16px; }
+  .hero h2 { font-size: 21px; }
+  .heroacts { flex-wrap: wrap; }
+  .heroacts .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Rows of choices scroll sideways rather than squeezing or overflowing. */
+  .seg, .tabs { overflow-x: auto; scrollbar-width: none; }
+  .seg::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }
+  .seg button { flex: none; white-space: nowrap; }
+
+  .toolbar { flex-wrap: wrap; }
+  .search { min-width: 0; max-width: none; flex: 1 1 100%; }
+
+  .drawer, .drawer.wide { width: 100%; max-width: 100%; }
+  .helpcard { margin: 0 12px; }
+}
+
+/* Safari zooms the whole page in when a field it is focusing has text below
+   sixteen pixels, and then leaves it zoomed.  Nothing about the layout can
+   undo that afterwards, so touch devices get fields it will leave alone. */
+@media (hover: none) and (pointer: coarse) {
+  .field input, .field select, .search input, select, textarea,
+  #aiinput { font-size: 16px; }
+  .field input, .field select { padding: 11px 12px; }
+  .btn { min-height: 40px; }
+  .btn.sm { min-height: 34px; }
+  /* Hover styling that lights up on first tap and stays lit until you touch
+     something else is worse than none. */
+  .navitem:hover { background: transparent; }
+  .navitem.active:hover { background: var(--panel-2); }
 }
 .testline.waiting { color: var(--ink-3); }
 
