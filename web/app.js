@@ -1119,8 +1119,10 @@ function setGeneral() {
             Math.abs(now - m) < 0.01 ? "on" : ""}" ${act(setInterval_, m)}
             >${prettyInterval(m)}</button>`).join("")}
         </div>
-        <p class="hint">Anything from one minute to a week. Currently
-        <strong>${prettyInterval(now)}</strong>.</p>
+          <p class="hint">Anything from one minute to a week. Currently
+          <strong>${prettyInterval(now)}</strong>. This is yours and is
+          remembered, so signing in again, or from another machine, finds
+          the same schedule.</p>
       </div>
 
       <div class="btnrow">
@@ -2330,6 +2332,20 @@ function interacting() {
   return Date.now() - LAST_TOUCH < 2500;
 }
 
+/* The theme the server is holding for this person, applied once when the
+   first status arrives. Only then: after that this machine's own toggle is
+   the newer opinion, and adopting the saved one again would undo it. */
+function adoptTheme(theme) {
+  if (S.themeSettled || !theme) return;
+  S.themeSettled = true;
+  if (document.documentElement.dataset.theme === theme) return;
+  transition(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("patchvane-theme", theme);
+    render();
+  });
+}
+
 async function pollStatus() {
   if (S.offline) return;
   try {
@@ -2338,6 +2354,7 @@ async function pollStatus() {
     const st = await r.json();
     const was = S.status.running;
     S.status = st;
+    adoptTheme(st.theme);
     chatBelongsToMe();
     if (S.data && st.generated && st.generated !== S.data.generated) {
       await load();
@@ -2420,9 +2437,12 @@ function toggleTheme() {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   transition(() => {
     document.documentElement.dataset.theme = next;
+    /* Locally so the next paint on this machine has it before the server
+       answers, and on the server so the next machine starts the same way. */
     localStorage.setItem("patchvane-theme", next);
     render();
   });
+  post("/api/prefs", { theme: next }).catch(() => {});
 }
 
 function keys(e) {

@@ -191,9 +191,26 @@ def remember_person(email: str) -> None:
     except OSError as exc:
         log("could not record the sign-in: %s" % exc)
 
-# Cloud filesystems are ephemeral and often read only, so a deployment keeps
-# its keys in the environment and never writes them down.
-ALLOW_SECRET_FILE = not CLOUD
+def data_survives_restart() -> bool:
+    """Is anything written into the data directory still there afterwards?
+
+    Locally it is a directory on a disk, so yes.  On a container with no
+    volume it is not, unless the deployment is snapshotting the directory
+    to a private repository, and the entrypoint turns that on by making it
+    a git checkout before this process starts.  Asking the directory is
+    better than assuming from the mode: it is the difference between a
+    key that outlives a restart and one that quietly does not."""
+    if not CLOUD:
+        return True
+    return os.path.isdir(os.path.join(DATA_DIR, ".git"))
+
+
+# Somewhere to write a key is the whole of whether "remember this" can mean
+# anything.  Refusing on a disk that does keep its contents costs the person
+# their keys on every restart and every other device, for no safety: the
+# vault is encrypted, and PATCHVANE_SECRET that opens it is in the
+# environment rather than in the snapshot.
+ALLOW_SECRET_FILE = env_flag("PATCHVANE_PERSIST_KEYS", data_survives_restart())
 
 SESSION_HOURS = int(env("PATCHVANE_SESSION_HOURS", "12") or 12)
 MAX_BODY = 64 * 1024
@@ -220,11 +237,18 @@ STOP = threading.Event()
 # How often to collect, and whether to at all.  One setting for the server,
 # because it is the server that does the fetching and it is one host's
 # politeness budget being spent.
+# The server-wide switch and the defaults a person inherits until they
+# change them for themselves.  Whose turn it is and when is worked out per
+# person now, from the interval each of them chose.
 STATE = {
     "auto": True,
     "interval": 15,
-    "next_run": None,
 }
+
+# How often the timer looks for somebody who has come due.  Short enough
+# that a five minute interval is honoured closely, long enough that a quiet
+# server is doing nothing most of the time.
+TICK = 30.0
 
 # What happened on the last collection, per person.
 RUNS = {}
@@ -705,13 +729,21 @@ def due_for_collection() -> list:
     git.kernel.org on nothing.  Having signed in once is not enough: the
     session has to still be in use, which is what active_people() answers."""
     out = []
+    now = time.time()
     for addr in active_people():
+        mine = prefs_of(addr)
+        # Their own switch, and their own interval: one person asking for
+        # every five minutes does not speed up or slow down anybody else.
+        if not mine["auto"]:
+            continue
         run = state_of(addr)
         last = run.get("last_run") or ""
         try:
             when = datetime.fromisoformat(last).timestamp() if last else 0
         except Exception:
             when = 0
+        if when and now - when < float(mine["interval"]) * 60.0:
+            continue
         out.append((when, addr))
     out.sort()
     return [addr for _, addr in out]
@@ -789,23 +821,22 @@ def scheduler() -> None:
     everybody at once would hammer lore and git.kernel.org from one host;
     round robin keeps every dashboard current without doing that.
 
-    WAKE cuts the wait short when the interval changes."""
+    Each person carries their own interval now, so this ticks on a short
+    fixed beat and asks who has come due rather than dividing one interval
+    between everybody.  WAKE cuts the wait short when somebody changes
+    their settings."""
     while not STOP.is_set():
         if not STATE["auto"]:
-            STATE["next_run"] = None
             WAKE.wait(30)
             WAKE.clear()
             continue
-        waiting = due_for_collection()
-        # With several people the round has to come round often enough that
-        # each of them is still refreshed about every interval.
-        wait = max(30.0, STATE["interval"] * 60.0 / max(1, len(waiting)))
-        STATE["next_run"] = datetime.fromtimestamp(
-            time.time() + wait, timezone.utc).astimezone().isoformat()
-        if WAKE.wait(wait):
+        if WAKE.wait(TICK):
             WAKE.clear()
             continue
-        if STATE["auto"] and not STOP.is_set() and waiting:
+        if STOP.is_set():
+            break
+        waiting = due_for_collection()
+        if waiting:
             run_collect(waiting[0], why="scheduled")
 
 
@@ -870,6 +901,63 @@ def ai_models(email: str = "") -> dict:
     picked = dict((CONFIG.get("ai") or {}).get("models") or {})
     picked.update(vault_of(email).get("models") or {})
     return {k: v for k, v in picked.items() if v}
+
+
+# What a person changed on the Settings page, and what it means when they
+# have not changed it.  These live in the vault with their keys rather than
+# in the browser, so that signing in from a second machine finds the same
+# dashboard rather than the defaults again.
+PREF_DEFAULTS = {"auto": None, "interval": None, "theme": ""}
+
+
+def prefs_of(email: str) -> dict:
+    """One person's settings, falling back to what this server started with.
+
+    auto and interval are stored as None until somebody sets them, so that
+    a deployment's own --interval keeps applying to everybody who has never
+    opened Settings, instead of being frozen the first time anyone did."""
+    saved = (vault_of(email).get("prefs") or {}) if email else {}
+    out = dict(PREF_DEFAULTS)
+    for k in out:
+        if saved.get(k) is not None:
+            out[k] = saved[k]
+    if out["auto"] is None:
+        out["auto"] = STATE["auto"]
+    if out["interval"] is None:
+        out["interval"] = STATE["interval"]
+    return out
+
+
+def save_prefs(email: str, patch: dict) -> bool:
+    """Change some of one person's settings and leave the rest alone."""
+    if not email:
+        return False
+    blob = vault_of(email)
+    keep = dict(blob.get("prefs") or {})
+    for k, v in patch.items():
+        if k in PREF_DEFAULTS:
+            keep[k] = v
+    blob["prefs"] = keep
+    return vault_save(email, blob)
+
+
+def next_run_for(email: str) -> str:
+    """When the timer is due to collect for this person next, if it is.
+
+    Their last run plus their own interval.  Empty when the timer is off,
+    for them or for the whole server, because a time that will never arrive
+    reads worse on the page than nothing at all."""
+    mine = prefs_of(email)
+    if not STATE["auto"] or not mine["auto"]:
+        return ""
+    last = (state_of(email).get("last_run") or "")
+    try:
+        when = datetime.fromisoformat(last).timestamp() if last else 0
+    except ValueError:
+        when = 0
+    due = (when + float(mine["interval"]) * 60.0) if when else (time.time() + TICK)
+    return datetime.fromtimestamp(max(due, time.time()),
+                                  timezone.utc).astimezone().isoformat()
 
 
 def save_ai_key(email: str, pid: str, key: str) -> bool:
@@ -1627,14 +1715,16 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             d = load_data(me, public=True)
             ready = ai_ready(me)
+            mine = prefs_of(me)
             self.json_out(200, {
                 "ok": True,
                 "mode": MODE,
                 "running": run["running"],
                 "progress": progress_of(me),
-                "auto": STATE["auto"],
-                "interval": STATE["interval"],
-                "next_run": STATE["next_run"],
+                "auto": STATE["auto"] and mine["auto"],
+                "interval": mine["interval"],
+                "next_run": next_run_for(me),
+                "theme": mine["theme"],
                 "last_run": run["last_run"],
                 "last_error": bool(run["last_error"]),
                 "generated": d.get("generated"),
@@ -1755,17 +1845,37 @@ class Handler(BaseHTTPRequestHandler):
                            "error": None if ok else summary})
         elif path == "/api/auto":
             form = self.body()
-            STATE["auto"] = bool(form.get("on"))
+            patch = {"auto": bool(form.get("on"))}
             if form.get("interval") is not None:
                 try:
-                    STATE["interval"] = clamp_interval(float(form["interval"]))
+                    patch["interval"] = clamp_interval(float(form["interval"]))
                 except (TypeError, ValueError):
                     pass
+            # Theirs, written down, so the next sign-in on any machine finds
+            # the schedule they asked for rather than this server's default.
+            saved = save_prefs(me, patch)
+            mine = prefs_of(me)
             WAKE.set()
-            log("auto refresh %s, every %s min"
-                % ("on" if STATE["auto"] else "off", STATE["interval"]))
-            self.json_out(200, {"ok": True, "auto": STATE["auto"],
-                                "interval": STATE["interval"]})
+            log("auto refresh %s, every %s min, for %s"
+                % ("on" if mine["auto"] else "off", mine["interval"],
+                   quiet_addr(me)))
+            self.json_out(200, {"ok": True, "auto": mine["auto"],
+                                "interval": mine["interval"],
+                                "saved": saved,
+                                "next_run": next_run_for(me)})
+        elif path == "/api/prefs":
+            # The rest of what Settings changes, kept in the same place as
+            # the schedule so that a second machine looks the same too.
+            form = self.body()
+            patch = {}
+            theme = (form.get("theme") or "").strip().lower()
+            if theme in ("dark", "light"):
+                patch["theme"] = theme
+            if not patch:
+                self.json_out(400, {"ok": False, "error": "nothing to set"})
+                return
+            self.json_out(200, {"ok": True, "saved": save_prefs(me, patch),
+                                "prefs": prefs_of(me)})
         elif path == "/api/ai":
             form = self.body()
             question = (form.get("prompt") or "").strip()[:4000]
