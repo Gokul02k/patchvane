@@ -290,17 +290,6 @@ function viewOverview() {
   const attention = d.threads.filter((t) => t.waiting_on_us);
   const owed = owedWork();
   const book = ledger(d.patches);
-  const accepted = k.merged + k.in_next + k.in_tree + k.accepted;
-  const hour = new Date().getHours();
-  const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const first = (d.profile.name || "").split(" ")[0];
-
-  const headline = attention.length
-    ? `${plural(attention.length, "thread")} on the list ${
-        attention.length === 1 ? "is" : "are"} waiting for a reply from you.`
-    : owed.respin.series.length
-      ? `${plural(owed.respin.series.length, "series", "series")} needs a new version.`
-      : `Nothing is waiting on you. ${accepted} of your ${k.patches} patches have been accepted upstream.`;
 
   const cards = [
     ["blue", "Patches posted", k.patches, `across ${plural(k.series, "series", "series")}`,
@@ -396,18 +385,6 @@ function viewOverview() {
 
   return `
   ${shortfall}
-  <section class="hero" data-reveal>
-    <div class="hx">
-      <p class="eyebrow">${esc(hello)}${first ? ", " + esc(first) : ""}</p>
-      <h2>${esc(headline)}</h2>
-      <div class="heroacts">
-        <button class="btn primary" ${act(askAI)}>Ask the assistant</button>
-        <button class="btn" ${act(go, "owed")}>What needs you</button>
-      </div>
-    </div>
-    <div class="hr">${ring(accepted, k.patches, "accepted", 116)}</div>
-  </section>
-
   <div class="kpis">${cards}</div>
 
   <div class="panel wide" data-reveal>
@@ -1085,11 +1062,11 @@ function owedNotes() {
          <p>${plural(withheld, "private note")} withheld by this deployment.<br>
          They stay on the machine that collected them.</p></div>`
       : `<div class="empty"><div class="emptyicon">\u2691</div>
-         <p>No open items. Add them to <code>notes.json</code>.</p></div>`);
+         <p>Nothing written down yet.</p></div>`);
 
   return `<div class="panel" data-reveal>
     <header><h2>Things you wrote down</h2>
-      <span class="sub">from notes.json</span></header>
+      <span class="sub">what is blocked, and what to fix next time</span></header>
     <div class="body flush">${cards}</div></div>`;
 }
 
@@ -1170,8 +1147,6 @@ function setGeneral() {
         <button class="btn" ${act(toggleTheme)}>Switch theme</button>
         <button class="btn ghost" ${act(signOut)}>Sign out</button>
       </div>
-      <p class="hint">Which lists and trees get scanned lives in
-      <code>config.json</code>. Watchlist items live in <code>notes.json</code>.</p>
     </div></div>
   </div>`;
 }
@@ -1208,9 +1183,9 @@ function setAI() {
         ${p.ready ? `<dt>Key from</dt><dd>${esc(p.source)}</dd>` : ""}
         <dt>Get a key</dt><dd class="mono">${esc(p.where)}</dd>
       </dl>
-      ${unset ? `<p class="hint">Each deployment has its own address. Set
-        <code>ai.endpoints.${esc(p.id)}</code> in <code>config.json</code> to
-        yours, or the key will not reach anything.</p>` : ""}
+      ${unset ? `<p class="hint">This provider gives every deployment its own
+        address, and this server has not been pointed at one, so a key added
+        here will not reach anything until it is.</p>` : ""}
       ${S.keyTest && S.keyTest.id === p.id
         ? `<p class="testline ${S.keyTest.pending ? "waiting"
             : S.keyTest.ok ? "ok" : "bad"}">${esc(S.keyTest.msg)}</p>`
@@ -1222,12 +1197,10 @@ function setAI() {
                     : "paste the key from " + esc(p.where)}">
         </div>
         ${st.can_store_key === false
-          ? `<p class="hint">This deployment will not write keys to disk. It
-             will live in memory until the server restarts, so set
-             <code>${esc(p.env)}</code> in the environment for anything
-             permanent.</p>`
+          ? `<p class="hint">This deployment will not write keys to disk, so
+             it will live in memory only until the server restarts.</p>`
           : `<label class="check"><input type="checkbox" data-remember="${p.id}"
-             checked> Keep it in <code>secrets.json</code></label>`}
+             checked> Remember this key</label>`}
         <div class="btnrow">
           <button class="btn primary sm" ${act(saveKey, p.id)}>Save</button>
           <button class="btn ghost sm" ${act(toggleKey, "")}>Cancel</button>

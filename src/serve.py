@@ -906,7 +906,7 @@ def ai_catalogue(email: str = "", keys=None) -> list:
         p = providers.PROVIDERS[pid]
         out.append({
             "id": pid, "label": p.label, "where": p.where,
-            "env": p.key_env, "endpoint": p.base,
+            "endpoint": p.base,
             "model": picked.get(pid) or p.default,
             "default": p.default,
             "good_at": sorted(p.good_at),

@@ -257,34 +257,6 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .panel.wide .body { padding: 4px 8px 0; }
 .hint { color: var(--ink-3); font-size: 12.5px; line-height: 1.65; margin: 12px 0 0; }
 
-/* ------------------------------------------------------------------ hero */
-
-.hero {
-  display: flex; align-items: center; gap: 26px;
-  padding: 24px 26px; border-radius: var(--r);
-  border: 1px solid var(--line); box-shadow: var(--shadow);
-  background:
-    radial-gradient(620px 200px at 0% 0%, rgba(76,141,255,.16), transparent 66%),
-    radial-gradient(520px 220px at 100% 100%, rgba(45,212,191,.12), transparent 62%),
-    var(--panel);
-  position: relative; overflow: hidden;
-}
-.hero::after {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(115deg, transparent 42%, rgba(255,255,255,.035) 50%, transparent 58%);
-  /* Decoration laid over the whole hero, buttons included. Without this it
-     swallows their clicks, because a pointer event on a pseudo-element goes
-     to the parent and never reaches the button underneath. */
-  pointer-events: none;
-}
-.hx { flex: 1; min-width: 0; position: relative; }
-.eyebrow { margin: 0 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--blue); }
-.hero h2 { font-size: 25px; line-height: 1.28; letter-spacing: -.026em;
-  max-width: 46ch; }
-.heroacts { display: flex; gap: 9px; margin-top: 16px; }
-.hr { flex: none; position: relative; }
-
 /* ------------------------------------------------------------------ kpis */
 
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 14px; }
@@ -1094,7 +1066,6 @@ button.link:hover { text-decoration: underline; }
   .wordmark, .navitem .lb, .navitem .count, .navitem .kbd, .sidefoot { display: none; }
   .navitem { justify-content: center; padding: 11px 0; }
   .logo { justify-content: center; }
-  .hero { flex-direction: column; align-items: flex-start; }
   .ttl p, .uname, .stamp i { display: none; }
   .content { padding: 14px; }
 }
@@ -1161,11 +1132,6 @@ button.link:hover { text-decoration: underline; }
   .tablewrap { -webkit-overflow-scrolling: touch; }
   .tablewrap table { min-width: 540px; }
   thead th, tbody td { padding-left: 11px; padding-right: 11px; }
-
-  .hero { padding: 18px 16px; }
-  .hero h2 { font-size: 21px; }
-  .heroacts { flex-wrap: wrap; }
-  .heroacts .btn { flex: 1 1 auto; justify-content: center; }
 
   /* Rows of choices scroll sideways rather than squeezing or overflowing. */
   .seg, .tabs { overflow-x: auto; scrollbar-width: none; }
