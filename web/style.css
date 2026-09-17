@@ -117,6 +117,27 @@ code { font-family: var(--mono); font-size: .92em;
 }
 .logo .mark { width: 30px; height: 30px; flex: none;
   filter: drop-shadow(0 4px 10px rgba(76,141,255,.4)); }
+
+/* The mark tells the same story the banner does, on the same six second
+   beat: the climb draws itself from the list up to mainline, rests there
+   long enough to be read as arrival, and retracts to go again, while the
+   glow behind the landing dot breathes.  The path measures 15.54 units,
+   so 16 covers it with a little to spare. */
+.mark .climb {
+  stroke-dasharray: 16; stroke-dashoffset: 16;
+  animation: markclimb 6s ease-in-out infinite;
+}
+.mark .landed { opacity: .15; animation: marklanded 6s ease-in-out infinite; }
+
+@keyframes markclimb {
+  0%        { stroke-dashoffset: 16; }
+  35%, 85%  { stroke-dashoffset: 0; }
+  100%      { stroke-dashoffset: 16; }
+}
+@keyframes marklanded {
+  0%, 100% { opacity: .15; }
+  50%      { opacity: .55; }
+}
 .wordmark { display: flex; flex-direction: column; line-height: 1.15;
   font-size: 16.5px; font-weight: 700; letter-spacing: -.02em; }
 .wordmark i { font-style: normal; font-size: 10.5px; font-weight: 500;
@@ -755,6 +776,9 @@ body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
   .fn-band, .fn-tick { transform: scaleY(1); }
   .hm { opacity: 1; }
   .spark { stroke-dasharray: none; stroke-dashoffset: 0; }
+  /* Stopping the loop must leave the mark drawn, not half erased. */
+  .mark .climb { stroke-dasharray: none; stroke-dashoffset: 0; }
+  .mark .landed { opacity: .35; }
 }
 
 ::view-transition-old(root) { animation: vtout .18s ease both; }
