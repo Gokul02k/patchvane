@@ -4,9 +4,10 @@ Where the patches come from, how each one is classified, and what the numbers on
 
 ## Whose patches it shows
 
-Yours, and it works out which those are from how you signed in. There is no
-address to configure and nothing to edit: sign in with your Gmail address and
-you get a dashboard of the patches you posted from it.
+Yours, and it works out which those are from the address you signed up with.
+There is no address to configure and nothing to edit: the address you proved
+is yours is the one it follows, and you get a dashboard of the patches you
+posted from it.
 
 The same server does this for everybody who signs in. Each address gets its
 own directory under `people/`, holding its own collected patches, its own
@@ -29,18 +30,19 @@ collected data stays on disk and is waiting when you come back.
 
 ### Keeping it to particular people
 
-Anyone who can log into a mailbox can get a dashboard of that address's
-patches, which is the point, and an address nobody holds the password to is
-no use to a stranger. A shared or public deployment can still narrow it to a
-list:
+Anyone who can read mail at an address can get a dashboard of that address's
+patches, which is the point. A shared or private deployment can still narrow
+it to a list:
 
 ```sh
-export PATCHVANE_ALLOW_EMAILS=colleague@gmail.com,someone.else@gmail.com
+export PATCHVANE_ALLOW_EMAILS=colleague@kernel.org,@amd.com
 ```
 
-or `config.json` under `signin.emails`. An address not on the list is turned
-away before Gmail is ever contacted, and the refusal does not name the
-addresses that would have worked.
+or `config.json` under `signin.emails`. A bare `@domain` allows everybody at
+that domain, which is what a company or a university wants. An address not on
+the list is turned away before any code is sent, and the refusal does not name
+the addresses that would have worked. `PATCHVANE_ALLOW_SIGNUP=0` stops new
+accounts altogether while leaving the existing ones working.
 
 ## The three sources
 

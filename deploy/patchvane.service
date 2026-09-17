@@ -51,7 +51,8 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictNamespaces=true
 LockPersonality=true
-# Outbound HTTPS to the archives, and IMAP to Gmail to check a sign-in.
+# Outbound HTTPS to the archives, and to the mail provider that carries the
+# sign-up codes.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

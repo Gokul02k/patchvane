@@ -28,6 +28,22 @@ services:
       # The deploy key for that repository, base64 on one line.
       - key: PATCHVANE_DATA_KEY
         sync: false
+      # Signing up means reading a six digit code sent to your own address,
+      # so the service has to be able to send one.  Render blocks outbound
+      # SMTP on free plans, so this goes over HTTPS: deploy/gmail-relay.gs is
+      # an Apps Script web app that sends through your own Gmail, which
+      # costs nothing and, because the mail really is from you, is not the
+      # shape a spam filter is looking for.  Its /exec address:
+      - key: PATCHVANE_GAS_URL
+        sync: false
+      # The secret that script and this service share, so that holding the
+      # URL is not enough to send mail as you.
+      - key: PATCHVANE_GAS_SECRET
+        sync: false
+      # Where the link in the welcome mail points, e.g.
+      # https://patchvane.onrender.com -- no trailing slash.
+      - key: PATCHVANE_URL
+        sync: false
       # The free plan has no disk that survives anything, and Render restarts
       # free services whenever it likes, so snapshot more often than the
       # ten-minute default.

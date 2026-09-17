@@ -21,9 +21,18 @@ Patchvane is usually run by one person on `127.0.0.1`, but it is written so
 that one server can collect for several people, and that is where the
 interesting boundaries are.
 
-**A Gmail app password** is what you sign in with. It is sent to Gmail over
-IMAP to be checked and is then dropped: it is never written to disk, never
-logged, and never held after the request that carried it.
+**A password** is what you sign in with. `people/<address>/account.json`,
+mode 0600, holds an scrypt hash of it and nothing that can be turned back
+into it. It is never logged, and never put in an email — not in the welcome
+one either, because a password in a mailbox is a password in every backup of
+that mailbox.
+
+**A one-time code** is what proves an address belongs to whoever typed it.
+Six digits, good for ten minutes and one use, held as an HMAC under a key the
+process makes at start-up and never writes down, five wrong answers before
+the sign-up is torn down. The half-finished sign-up it belongs to lives in
+memory only: a name and an address with nothing proved about either is not
+something to put on a disk that gets snapshotted.
 
 **API keys for the assistant** are kept per person, in
 `people/<address>/vault.json`, mode 0600, sealed with a key derived from the
@@ -42,6 +51,11 @@ there is no session store to steal. `PATCHVANE_SECRET` signs them, has to be
 at least 32 characters, and the server refuses to start without one. A
 restart rolls the epoch and signs everybody out, unless
 `PATCHVANE_SESSION_EPOCH` is set by hand.
+
+**Outbound mail** goes through one provider's HTTPS API, carrying an address,
+a name and a code. `src/mailer.py` is the only thing here that sends anything
+anywhere, and it only sends to an address somebody has just typed into the
+sign-up or reset form.
 
 **What is sent to a model**, when the assistant is used, is narrowed first:
 `src/redact.py` masks reviewer addresses before anything leaves the machine, and

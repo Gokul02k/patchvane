@@ -7,16 +7,20 @@ Local, the way it has always worked:
 
 Deployed, reachable from the internet, behind a TLS terminating proxy:
 
-    python3 src/serve.py --hash-passphrase  once, to make a passphrase hash
     PATCHVANE_MODE=cloud \
     PATCHVANE_SECRET=... \
-    PATCHVANE_PASSPHRASE_HASH=... \
+    PATCHVANE_GAS_URL=... \
+    PATCHVANE_GAS_SECRET=... \
     python3 src/serve.py
 
-Cloud mode refuses to start without a session secret and a passphrase hash,
-insists on HTTPS, masks every reviewer address on the way out and leaves the
-private notes behind.  It is meant for one person: the one who sent the
-patches.  There is no user model and no sharing, by design.
+Cloud mode refuses to start without a session secret, insists on HTTPS,
+masks every reviewer address on the way out and leaves the private notes
+behind.  Everybody who signs up gets their own dashboard of their own
+patches, and can reach nobody else's.
+
+People sign up with the address they send patches from, prove it by reading
+a code sent to it, and choose a password.  That is the whole account: see
+accounts.py for what is kept and mailer.py for how the code gets there.
 
 Every setting is an environment variable, so nothing secret is ever written
 next to the code.  `--check` validates the configuration and exits, which is
@@ -27,11 +31,9 @@ from __future__ import annotations
 
 import argparse
 import base64
-import getpass
 import hashlib
 import hmac
 import http.cookies
-import imaplib
 import json
 import mimetypes
 import os
@@ -51,6 +53,8 @@ from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 
+import accounts
+import mailer
 import providers
 import redact
 import vault
@@ -97,23 +101,24 @@ SECRETS = os.path.join(DATA_DIR, "secrets.json")
 # the address itself, so a listing of the disk does not read as a list of
 # who uses this.
 PEOPLE = os.path.join(DATA_DIR, "people")
+accounts.configure(PEOPLE)
 
 APP = CONFIG.get("app_name", "Patchvane")
 
 # The session cookie, and the header a same-origin request must carry.
 COOKIE = "patchvane"
 
-# The address in config.json, if there is one.  It is only a default now:
-# whoever signs in gets their own patches, and this is what the passphrase
-# route falls back to when nobody has said whose dashboard to show.
+# The address in config.json, if there is one.  Nothing signs in with it any
+# more: whoever signs up gets their own patches under the address they
+# proved.  It survives as the owner of a collection made before this server
+# knew about accounts, so that migrate_single_user() knows whose it was.
 OWNER = (env("PATCHVANE_OWNER") or CONFIG.get("email")
          or "").strip().lower()
 
 
-def home_of(email: str) -> str:
-    """Where one person's collected patches live."""
-    who = (email or "").strip().lower()
-    return os.path.join(PEOPLE, hashlib.sha256(who.encode()).hexdigest()[:20])
+# Where one person's collected patches live.  Named after a hash of their
+# address, so a listing of the disk is not a list of who uses this server.
+home_of = accounts.home_of
 
 
 def data_path(email: str) -> str:
@@ -340,66 +345,22 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-# -------------------------------------------------------------- passphrase
+# ------------------------------------------------------------- who gets in
 
 
-SCRYPT = dict(n=2 ** 15, r=8, p=1, dklen=32)
-
-# OpenSSL caps scrypt at 32 MB unless asked otherwise, and these parameters
-# want exactly that much, so it refuses by a single byte.  Ask for headroom.
-SCRYPT_MAXMEM = 128 * SCRYPT["n"] * SCRYPT["r"] * 2
-
-
-def hash_passphrase(passphrase: str, salt: bytes = b"") -> str:
-    """scrypt, because a passphrase on the open internet gets guessed at."""
-    salt = salt or os.urandom(16)
-    digest = hashlib.scrypt(passphrase.encode("utf-8"), salt=salt,
-                            maxmem=SCRYPT_MAXMEM, **SCRYPT)
-    return "scrypt$%s$%s" % (base64.b64encode(salt).decode(),
-                             base64.b64encode(digest).decode())
-
-
-def check_passphrase(passphrase: str, stored: str) -> bool:
-    try:
-        kind, salt_b64, want_b64 = stored.split("$")
-        if kind != "scrypt":
-            return False
-        salt = base64.b64decode(salt_b64)
-        got = hashlib.scrypt(passphrase.encode("utf-8"), salt=salt,
-                             maxmem=SCRYPT_MAXMEM, **SCRYPT)
-        return hmac.compare_digest(got, base64.b64decode(want_b64))
-    except Exception:
-        return False
-
-
-# Two ways in, and whoever is signing in picks one.
-#
-#   Gmail   your address and a Google app password, checked against Gmail
-#           itself over IMAP.  Nothing is stored: the password is used for a
-#           single login and discarded.  Only the address in config.json is
-#           accepted, so owning some other Gmail account gets you nowhere.
-#   Phrase  a passphrase you chose, kept as an scrypt hash.  Useful where the
-#           host blocks outbound IMAP, which several providers do.
-#
-# Either is enough on its own.  PATCHVANE_REQUIRE_BOTH turns that into an
-# and, for anyone who wants the second factor.
-PASS_HASH = env("PATCHVANE_PASSPHRASE_HASH")
-ALLOW_GMAIL = env_flag("PATCHVANE_ALLOW_GMAIL",
-                       env_flag("PATCHVANE_REQUIRE_GMAIL", True))
-REQUIRE_BOTH = env_flag("PATCHVANE_REQUIRE_BOTH", False)
+# Anyone may sign up, by default.  Proving an address is theirs is the only
+# thing sign-up establishes, and it gets them a dashboard of that address's
+# patches and nothing else, so there is nothing here to hand out carefully.
+# A deployment meant for one team narrows it anyway.
+ALLOW_SIGNUP = env_flag("PATCHVANE_ALLOW_SIGNUP", True)
 
 
 def signin_emails() -> list:
-    """Which addresses may sign in, or an empty list meaning anyone may.
+    """Which addresses may hold an account, or an empty list meaning any.
 
-    Signing in means logging into your own mailbox, so an address nobody
-    holds the password to is no use to anybody.  That makes an allow list
-    unnecessary for the common case, and this is empty by default: whoever
-    proves an address is theirs gets a dashboard of that address's patches
-    and nothing else.
-
-    A shared or public deployment can still narrow it, with
-    PATCHVANE_ALLOW_EMAILS or signin.emails in config.json."""
+    A shared or private deployment narrows it with PATCHVANE_ALLOW_EMAILS or
+    signin.emails in config.json.  Either takes whole domains too, written
+    as @example.com, which is what a company or a university wants."""
     named = env("PATCHVANE_ALLOW_EMAILS") or ""
     if not named:
         named = ",".join((CONFIG.get("signin") or {}).get("emails") or [])
@@ -415,13 +376,19 @@ SIGNIN_EMAILS = signin_emails()
 
 
 def may_sign_in(email: str) -> bool:
-    return not SIGNIN_EMAILS or email.strip().lower() in SIGNIN_EMAILS
+    who = (email or "").strip().lower()
+    if not SIGNIN_EMAILS:
+        return True
+    return any(who == a or (a.startswith("@") and who.endswith(a))
+               for a in SIGNIN_EMAILS)
 
 
 def who_may() -> str:
     """For the startup line: who this server will let in."""
+    if not ALLOW_SIGNUP:
+        return "only the accounts that already exist"
     if not SIGNIN_EMAILS:
-        return "anyone who can log into their own mailbox"
+        return "anyone who can read mail at the address they sign up with"
     return "only %s" % ", ".join(quiet_addr(a) for a in SIGNIN_EMAILS)
 
 
@@ -479,35 +446,32 @@ def new_session(email: str) -> str:
                  "exp": int(time.time() + SESSION_HOURS * 3600)})
 
 
-def check_gmail(email: str, password: str) -> str:
-    """Empty string when the credentials work, otherwise why they did not."""
-    if not may_sign_in(email):
-        # Only reachable on a deployment that narrowed the list.  Saying
-        # which addresses are on it would tell an attacker who to go after,
-        # so the reply names none of them.
-        return ("This dashboard is limited to particular addresses, and that "
-                "is not one of them. The operator can add it to "
-                "PATCHVANE_ALLOW_EMAILS, or to signin.emails in config.json.")
-    try:
-        M = imaplib.IMAP4_SSL(CONFIG.get("imap_host", "imap.gmail.com"),
-                              timeout=25)
-    except Exception as exc:
-        return ("Cannot reach Gmail from this host: %s. Some providers block "
-                "outbound IMAP, in which case set a passphrase with "
-                "--hash-passphrase and sign in with that instead." % exc)
-    try:
-        M.login(email, password)
-        M.logout()
+def mask_addr_for_page(email: str) -> str:
+    """"We sent it to h***@amd.com."  Enough to catch a typo in the domain,
+    not enough to be the answer to "what address is this account under"."""
+    user, _, host = (email or "").partition("@")
+    if not host:
+        return "that address"
+    return "%s%s@%s" % (user[:2], "\u2022" * max(1, len(user) - 2), host)
+
+
+def send_code_for(flow_kind: str, email: str, code: str, first: str = "",
+                  gender: str = "") -> str:
+    """Put a code in somebody's inbox.  Empty string when it went."""
+    ok, detail = mailer.send_code(email, code, first=first, gender=gender,
+                                  minutes=accounts.CODE_MINUTES,
+                                  new_account=(flow_kind == "signup"), log=log)
+    if ok:
         return ""
-    except imaplib.IMAP4.error as exc:
-        detail = str(exc)
-        if "Invalid credentials" in detail or "AUTHENTICATIONFAILED" in detail:
-            return ("Gmail rejected that. Use a 16 character app password from "
-                    "myaccount.google.com/apppasswords, not your account "
-                    "password.")
-        return "Gmail refused the sign-in."
-    except Exception:
-        return "Sign-in failed."
+    log("could not send a %s code to %s: %s"
+        % (flow_kind, quiet_addr(email), detail))
+    if not mailer.ready():
+        # Nothing was configured, which is the operator's problem and not
+        # this person's.  Say so plainly rather than blaming their address.
+        return ("This server cannot send email yet, so it cannot send you a "
+                "code. Whoever runs it needs to set a mail provider key.")
+    return ("The code could not be sent to that address. Check it is spelt "
+            "right, and try again in a moment.")
 
 
 # ------------------------------------------------------------ rate limiting
@@ -521,6 +485,18 @@ class Limiter:
         self.lock = threading.Lock()
 
     def allow(self, who: str) -> bool:
+        """One go, counted.  False once they have had their share."""
+        if self.blocked(who):
+            return False
+        self.spend(who)
+        return True
+
+    def blocked(self, who: str) -> bool:
+        """Have they used up their share?  Asked without using another.
+
+        Sign-in wants this apart from spend(): the limit is there to stop
+        guessing, and somebody who types their own password correctly on
+        five devices has guessed nothing."""
         now = time.time()
         with self.lock:
             q = self.hits.setdefault(who, deque())
@@ -529,10 +505,11 @@ class Limiter:
             if len(self.hits) > 2048:            # a flood must not eat memory
                 for k in [k for k, v in self.hits.items() if not v][:1024]:
                     self.hits.pop(k, None)
-            if len(q) >= self.allowance:
-                return False
-            q.append(now)
-            return True
+            return len(q) >= self.allowance
+
+    def spend(self, who: str) -> None:
+        with self.lock:
+            self.hits.setdefault(who, deque()).append(time.time())
 
 
 # Counted per client address.  Behind a proxy that does not set
@@ -541,6 +518,13 @@ class Limiter:
 LOGIN_LIMIT = Limiter(int(env("PATCHVANE_LOGIN_TRIES", "5") or 5),
                       int(env("PATCHVANE_LOGIN_WINDOW", "300") or 300))
 API_LIMIT = Limiter(int(env("PATCHVANE_API_RATE", "120") or 120), 60)
+
+# Anything that puts a message in somebody's inbox, counted per client
+# address as well as per address in accounts.py.  One is about not being
+# used to send mail to strangers, the other about not sending one person
+# forty codes.
+MAIL_LIMIT = Limiter(int(env("PATCHVANE_MAIL_TRIES", "8") or 8),
+                     int(env("PATCHVANE_MAIL_WINDOW", "900") or 900))
 
 
 # ------------------------------------------------------------------- policy
@@ -1598,8 +1582,8 @@ class Handler(BaseHTTPRequestHandler):
     def redirect(self, where: str, headers=None):
         self.send(303, b"", "text/plain", [("Location", where)] + (headers or []))
 
-    def json_out(self, code: int, obj):
-        self.send(code, json.dumps(obj).encode(), "application/json")
+    def json_out(self, code: int, obj, headers=None):
+        self.send(code, json.dumps(obj).encode(), "application/json", headers)
 
     def file_out(self, name: str):
         path = os.path.join(WEB, os.path.basename(name))
@@ -1667,11 +1651,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/signin":
-            # What the sign-in form should ask for.  Says nothing a stranger
-            # could not learn by trying.
-            self.json_out(200, {"passphrase": bool(PASS_HASH),
-                                "gmail": ALLOW_GMAIL, "both": REQUIRE_BOTH,
-                                "app": APP})
+            # What the sign-in page can offer.  Says nothing a stranger could
+            # not learn by trying it.
+            self.json_out(200, {
+                "app": APP,
+                "signup": ALLOW_SIGNUP,
+                "mail": mailer.ready(),
+                "limited": bool(SIGNIN_EMAILS),
+                "code_minutes": accounts.CODE_MINUTES,
+                "resend_seconds": accounts.RESEND_SECONDS,
+            })
             return
 
         if path in ("/style.css", "/login.js"):
@@ -1730,6 +1719,9 @@ class Handler(BaseHTTPRequestHandler):
                 "generated": d.get("generated"),
                 "privacy": policy(me).describe(),
                 "who": me,
+                # Who they are, so the page can greet them by name rather
+                # than by address.  Their own record and nobody else's.
+                "account": accounts.display(accounts.by_email(me)),
                 "has_data": os.path.exists(data_path(me)),
                 "notes_withheld": d.get("notes_withheld", 0),
                 "can_store_key": ALLOW_SECRET_FILE,
@@ -1784,38 +1776,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlparse(self.path).path
 
-        if path == "/login":
-            if not LOGIN_LIMIT.allow(self.client_ip()):
-                self.redirect("/login?error=" + urllib.parse.quote(
-                    "Too many attempts. Wait five minutes."))
+        # Signing up and signing in happen before there is a session, so they
+        # come first and carry their own limits.  A cross-site form post
+        # cannot set a custom header, so requiring one here stops another
+        # page driving these too.
+        if path.startswith("/api/auth/"):
+            if self.headers.get("X-Requested-With") != COOKIE:
+                self.json_out(403, {"ok": False, "error": "bad request origin"})
                 return
-            form = self.body()
-            problem = self.check_login(form)
-            if problem:
-                log("failed sign-in from %s" % self.client_ip())
-                self.redirect("/login?error=" + urllib.parse.quote(problem))
-                return
-            # Whoever signed in.  This is their dashboard from here on:
-            # their patches get collected, and their patches are what they
-            # see.
-            # Gmail says who you are; a passphrase does not, so that route
-            # asks which address to track.
-            who = ((form.get("email") or "").strip().lower()
-                   or (form.get("track") or "").strip().lower()
-                   or OWNER)
-            if not who or "@" not in who:
-                self.redirect("/login?error=" + urllib.parse.quote(
-                    "Say which address to track, so the dashboard knows "
-                    "whose patches to collect."))
-                return
-            log("signed in from %s as %s" % (self.client_ip(), quiet_addr(who)))
-            remember_person(who)
-            touch_active(who)
-            # Nothing collected for them yet.  Start now, in the background,
-            # so the page can open and say what is happening instead of
-            # hanging on a first collection.
-            ensure_collecting(who, why="first sign-in")
-            self.redirect("/", [self.set_cookie(new_session(who))])
+            self.do_auth(path[len("/api/auth/"):])
             return
 
         sess = self.session()
@@ -1944,34 +1913,262 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send(404, b"not found", "text/plain; charset=utf-8")
 
-    def check_login(self, form: dict) -> str:
-        """Empty string when the sign-in is good, otherwise why it is not.
+    # ------------------------------------------------------- accounts
 
-        The form says which way it is signing in.  That choice only ever
-        narrows what is checked; it can never reach a method this deployment
-        did not enable."""
-        phrase = lambda: (
-            "" if PASS_HASH and check_passphrase(form.get("passphrase", ""),
-                                                 PASS_HASH)
-            else "That passphrase is not right.")
-        gmail = lambda: check_gmail(form.get("email", ""),
-                                    form.get("password", ""))
+    def no(self, why: str, field: str = "", code: int = 400) -> None:
+        """One refusal, and which box it belongs under."""
+        self.json_out(code, {"ok": False, "error": why, "field": field})
 
-        if REQUIRE_BOTH:
-            if not (PASS_HASH and ALLOW_GMAIL):
-                return "This server is misconfigured and cannot sign anyone in."
-            return phrase() or gmail()
+    def may_mail(self) -> bool:
+        """Spend one of this address's messages, or say why not."""
+        if MAIL_LIMIT.allow(self.client_ip()):
+            return True
+        self.no("Too many codes asked for from here. Try again later.",
+                "", 429)
+        return False
 
-        method = (form.get("method") or "").strip().lower()
-        if method == "passphrase":
-            if not PASS_HASH:
-                return "This server does not take a passphrase."
-            return phrase()
-        if method == "gmail":
-            if not ALLOW_GMAIL:
-                return "This server does not take an app password."
-            return gmail()
-        return "Choose how you want to sign in."
+    def let_in(self, rec: dict, why: str) -> None:
+        """Hand out a session and start their first collection."""
+        who = rec["email"]
+        log("%s from %s as %s" % (why, self.client_ip(), quiet_addr(who)))
+        remember_person(who)
+        touch_active(who)
+        # Nothing collected for them yet.  Start now, in the background, so
+        # the page can open and say what is happening instead of hanging on
+        # a first collection.
+        ensure_collecting(who, why=why)
+        self.json_out(200, {"ok": True, "to": "/"},
+                      headers=[self.set_cookie(new_session(who))])
+
+    def do_auth(self, step: str) -> None:
+        """Sign up, prove the address, choose a password, sign in.
+
+        Every step answers with {ok} or {ok, error, field}, because the page
+        puts the message under the box it is about rather than in a strip at
+        the top that says something went wrong somewhere."""
+        form = self.body()
+
+        if step == "login":
+            if LOGIN_LIMIT.blocked(self.client_ip()):
+                self.no("Too many attempts. Wait five minutes.", "", 429)
+                return
+            who = (form.get("who") or "").strip()
+            if not who:
+                self.no("Enter your username or email address.", "who")
+                return
+            rec, why = accounts.sign_in(who, form.get("password") or "")
+            if why:
+                # Only wrong answers are counted, because the limit is here
+                # to stop guessing and a right answer has guessed nothing.
+                LOGIN_LIMIT.spend(self.client_ip())
+                log("failed sign-in from %s" % self.client_ip())
+                self.no(why, "password", 401)
+                return
+            if not may_sign_in(rec["email"]):
+                self.no("This dashboard is limited to particular addresses, "
+                        "and that account is no longer one of them.", "", 403)
+                return
+            self.let_in(rec, "signed in")
+            return
+
+        if step == "start":
+            # A new account: everything about them except the password,
+            # which they do not get to choose until the address is proved.
+            if not ALLOW_SIGNUP:
+                self.no("This server is not taking new accounts.")
+                return
+            first = form.get("first") or ""
+            last = form.get("last") or ""
+            user = form.get("username") or ""
+            gender = form.get("gender") or ""
+            email = form.get("email") or ""
+            for why, field in ((accounts.name_problem(first, "First name"), "first"),
+                               (accounts.name_problem(last, "Last name"), "last"),
+                               (accounts.username_problem(user), "username"),
+                               (accounts.gender_problem(gender), "gender"),
+                               (accounts.email_problem(email), "email")):
+                if why:
+                    self.no(why, field)
+                    return
+            email = accounts.clean_email(email)
+            user = accounts.clean_username(user)
+            if not may_sign_in(email):
+                self.no("This dashboard is limited to particular addresses, "
+                        "and that is not one of them.", "email")
+                return
+            if accounts.username_taken(user):
+                self.no("That username is taken. Try another.", "username")
+                return
+            if accounts.email_taken(email):
+                self.no("That address already has an account. Sign in, or "
+                        "use \u201cForgot password\u201d.", "email")
+                return
+            # Counted here rather than on the way in, because the budget is
+            # for messages sent and somebody mistyping their own address
+            # four times has sent none.
+            if not self.may_mail():
+                return
+            token, code, why = accounts.start("signup", email, {
+                "first": accounts.clean_name(first),
+                "last": accounts.clean_name(last),
+                "username": user,
+                "gender": gender.strip().lower(),
+            })
+            if why:
+                self.no(why, "email", 429)
+                return
+            trouble = send_code_for("signup", email, code,
+                                    first=accounts.clean_name(first),
+                                    gender=gender)
+            if trouble:
+                accounts.finish(token)
+                self.no(trouble, "email", 502)
+                return
+            self.json_out(200, {"ok": True, "token": token,
+                                "sent_to": mask_addr_for_page(email)})
+            return
+
+        if step == "forgot":
+            email = accounts.clean_email(form.get("email") or "")
+            why = accounts.email_problem(email)
+            if why:
+                self.no(why, "email")
+                return
+            rec = accounts.by_email(email)
+            if not rec.get("password"):
+                # Somebody typing the wrong address of their own is far more
+                # likely here than somebody probing for accounts, and being
+                # told "check your inbox" when nothing is coming wastes ten
+                # minutes of their evening.
+                self.no("There is no account for that address. Check the "
+                        "spelling, or create one.", "email", 404)
+                return
+            if not self.may_mail():
+                return
+            token, code, why = accounts.start("reset", email,
+                                              {"username": rec["username"]})
+            if why:
+                self.no(why, "email", 429)
+                return
+            trouble = send_code_for("reset", email, code,
+                                    first=rec.get("first", ""),
+                                    gender=rec.get("gender", ""))
+            if trouble:
+                accounts.finish(token)
+                self.no(trouble, "email", 502)
+                return
+            self.json_out(200, {"ok": True, "token": token,
+                                "sent_to": mask_addr_for_page(email)})
+            return
+
+        if step == "resend":
+            token = form.get("token") or ""
+            f = accounts.flow(token)
+            if not f:
+                self.no("That took too long. Start again.", "", 410)
+                return
+            if not self.may_mail():
+                return
+            code, why = accounts.resend(token)
+            if why:
+                self.no(why, "code", 429)
+                return
+            data = f.get("data") or {}
+            trouble = send_code_for(f["kind"], f["email"], code,
+                                    first=data.get("first", ""),
+                                    gender=data.get("gender", ""))
+            if trouble:
+                self.no(trouble, "code", 502)
+                return
+            self.json_out(200, {"ok": True,
+                                "sent_to": mask_addr_for_page(f["email"])})
+            return
+
+        if step == "code":
+            token = form.get("token") or ""
+            if not accounts.flow(token):
+                self.no("That took too long. Start again.", "", 410)
+                return
+            why = accounts.check(token, form.get("code") or "")
+            if why:
+                self.no(why, "code")
+                return
+            self.json_out(200, {"ok": True})
+            return
+
+        if step == "finish":
+            # The address is proved by now; this is the password.
+            token = form.get("token") or ""
+            f = accounts.flow(token)
+            if not f:
+                self.no("That took too long. Start again.", "", 410)
+                return
+            if not f.get("verified"):
+                self.no("Check the code first.", "code", 403)
+                return
+            password = form.get("password") or ""
+            confirm = form.get("confirm") or ""
+            data = f.get("data") or {}
+            why = accounts.password_problem(password,
+                                            username=data.get("username", ""),
+                                            email=f["email"])
+            if why:
+                self.no(why, "password")
+                return
+            if password != confirm:
+                self.no("Those two do not match.", "confirm")
+                return
+
+            if f["kind"] == "signup":
+                if accounts.username_taken(data.get("username", "")):
+                    # Somebody else finished with that name while this one
+                    # was reading their inbox.
+                    accounts.finish(token)
+                    self.no("That username was taken while you were away. "
+                            "Start again with another.", "username")
+                    return
+                rec = accounts.create(f["email"], data.get("username", ""),
+                                      data.get("first", ""),
+                                      data.get("last", ""),
+                                      data.get("gender", "private"), password)
+                if not rec:
+                    self.no("The account could not be written. Try again.",
+                            "", 500)
+                    return
+                accounts.finish(token)
+                log("new account %s for %s" % (rec["username"],
+                                               quiet_addr(rec["email"])))
+                mailer.send_welcome(rec["email"], rec["username"],
+                                    first=rec["first"], last=rec["last"],
+                                    gender=rec["gender"], log=log)
+                self.let_in(rec, "signed up")
+                return
+
+            rec = accounts.by_email(f["email"])
+            if not rec or not accounts.set_password(f["email"], password):
+                accounts.finish(token)
+                self.no("That password could not be saved. Try again.", "", 500)
+                return
+            accounts.finish(token)
+            log("password reset for %s" % quiet_addr(rec["email"]))
+            rec = accounts.by_email(f["email"])
+            mailer.send_password_changed(rec["email"], rec["username"],
+                                         first=rec.get("first", ""),
+                                         gender=rec.get("gender", ""), log=log)
+            self.let_in(rec, "reset their password")
+            return
+
+        if step == "username":
+            # Live, as they type, because finding out a name is taken after
+            # filling in the whole form is the worst moment to find out.
+            user = accounts.clean_username(form.get("username") or "")
+            why = accounts.username_problem(user)
+            self.json_out(200, {"ok": True, "free": not why and
+                                not accounts.username_taken(user),
+                                "error": why})
+            return
+
+        self.send(404, b"not found", "text/plain; charset=utf-8")
 
 
 def clamp_interval(minutes: float) -> float:
@@ -2004,29 +2201,25 @@ def problems() -> list:
                        "print(secrets.token_urlsafe(48))\"")
     elif len(SECRET) < 32:
         bad.append("PATCHVANE_SECRET is shorter than 32 characters.")
-    if not PASS_HASH and not ALLOW_GMAIL:
-        bad.append("Nothing checks who is signing in. Leave "
-                   "PATCHVANE_ALLOW_GMAIL on to sign in with your Gmail "
-                   "address and an app password, or set a passphrase with: "
-                   "python3 src/serve.py --hash-passphrase")
-    # Gmail sign-in deliberately needs no address configured: the app password
-    # is checked against the mailbox it claims to be, and whoever gets in gets
-    # a dashboard of their own patches.  OWNER is only the passphrase route's
-    # default.  Demanding it here made a fresh clone refuse to start.
     if SIGNIN_EMAILS and not any("@" in a for a in SIGNIN_EMAILS):
         bad.append("The sign-in allowlist has no address in it, so nobody "
                    "could ever get in. Fix PATCHVANE_ALLOW_EMAILS or "
                    "signin.emails in config.json, or unset it to let anyone "
-                   "in who can log into their own mailbox.")
-    if REQUIRE_BOTH and not (PASS_HASH and ALLOW_GMAIL):
-        bad.append("PATCHVANE_REQUIRE_BOTH is set but only one sign-in method "
-                   "is configured, so nobody could ever get in.")
+                   "sign up with an address they can read mail at.")
+    # Half-configured mail is the case worth refusing over: a key with no
+    # verified address to send from fails at the moment somebody is waiting
+    # for a code, which is the worst place to find out.  No provider at all
+    # is a caution instead -- the dashboard still works for everybody who
+    # has an account, and a server that will not start helps nobody.
+    # The Apps Script relay is the exception: it sends as whoever deployed
+    # it, so there is nothing to configure and nothing to get wrong.
+    if mailer.transports() and not mailer.ready():
+        bad.append("A mail provider key is set but PATCHVANE_MAIL_FROM is "
+                   "not, so there is no address to send codes from. It has "
+                   "to be one the provider has verified.")
     if CLOUD and not REQUIRE_HTTPS:
         bad.append("PATCHVANE_REQUIRE_HTTPS is off in cloud mode. The session "
                    "cookie would travel in the clear.")
-    if PASS_HASH and not PASS_HASH.startswith("scrypt$"):
-        bad.append("PATCHVANE_PASSPHRASE_HASH is not a hash made by "
-                   "--hash-passphrase.")
     if CLOUD and os.path.exists(os.path.join(DATA_DIR, "dashboard.html")):
         bad.append("dashboard.html is in the data directory. It carries a full "
                    "copy of everything and needs no sign-in. Delete it.")
@@ -2034,51 +2227,42 @@ def problems() -> list:
 
 
 def sign_in_wants() -> str:
-    ways = list(filter(None, ["Gmail app password" if ALLOW_GMAIL else "",
-                              "passphrase" if PASS_HASH else ""]))
-    return (" and ".join(ways) if REQUIRE_BOTH else " or ".join(ways)) or "NOTHING"
+    """For the startup line: what somebody types to get in."""
+    how = "username or email, and a password"
+    if not ALLOW_SIGNUP:
+        return how
+    way = mailer.transport()
+    return "%s; new accounts by %s" % (how, {
+        "": "NO ROUTE (no mail provider configured)",
+        "log": "a code written to this log",
+        "gas": "a code sent from your own Gmail",
+    }.get(way, "a code sent by %s" % way))
 
 
 def cautions() -> list:
     """Things that will not stop the server but will surprise whoever runs it.
 
-    Reaching Gmail is checked here rather than left for the first sign-in,
-    because a host with outbound IMAP blocked locks everybody out and the only
-    symptom is a timeout on the login page."""
+    Mail is checked here rather than left for the first sign-up, because a
+    host that cannot send is a sign-up form that looks fine until the moment
+    somebody waits for a code that is never coming."""
     warn = []
-    if ALLOW_GMAIL:
-        host = CONFIG.get("imap_host", "imap.gmail.com")
-        try:
-            imaplib.IMAP4_SSL(host, timeout=8).logout()
-        except Exception as exc:
-            trouble = ("cannot reach %s from here (%s), so app passwords "
-                       "cannot be checked" % (host, exc))
-            warn.append(trouble + (
-                ". The passphrase still works, so use that one."
-                if PASS_HASH and not REQUIRE_BOTH else
-                ". Nobody can sign in until this host is allowed outbound "
-                "IMAP, or you set a passphrase with --hash-passphrase."))
-    if REQUIRE_BOTH:
-        warn.append("PATCHVANE_REQUIRE_BOTH is on, so sign-in needs the app "
-                    "password and the passphrase together")
+    if ALLOW_SIGNUP and not mailer.ready() and not mailer.transports():
+        warn.append(mailer.why_not() + " Until one is set, nobody new can "
+                    "sign up and the page says so; everybody who already has "
+                    "an account still signs in.")
+    elif mailer.transport() == "log":
+        warn.append(mailer.why_not() + " Until then, codes are written to "
+                    "this log, which is fine on your own machine and nowhere "
+                    "else.")
+    elif mailer.transport() == "smtp" and CLOUD:
+        warn.append("mail is set to go out over SMTP, which many hosts block "
+                    "on their free plans (Render blocks ports 25, 465 and 587 "
+                    "outright). If codes never arrive, that is why: send over "
+                    "HTTPS instead, with PATCHVANE_GAS_URL or a provider key")
+    if mailer.ready() and mailer.transport() != "log" and not mailer.SITE:
+        warn.append("PATCHVANE_URL is not set, so the welcome mail has no "
+                    "link back to the site")
     return warn
-
-
-def make_passphrase() -> int:
-    print("Pick a passphrase for the deployed dashboard. Long beats clever.\n")
-    a = getpass.getpass("Passphrase: ")
-    if len(a) < 12:
-        print("\nToo short. Use at least twelve characters.")
-        return 1
-    if a != getpass.getpass("Again: "):
-        print("\nThose did not match.")
-        return 1
-    print("\nSet this in the environment where the server runs.")
-    print("It is a hash: it cannot be turned back into the passphrase.\n")
-    print("PATCHVANE_PASSPHRASE_HASH='%s'" % hash_passphrase(a))
-    print("\nWhile you are there, you need a session secret too:\n")
-    print("PATCHVANE_SECRET='%s'" % secrets.token_urlsafe(48))
-    return 0
 
 
 def main() -> int:
@@ -2094,16 +2278,13 @@ def main() -> int:
                     default=float(env("PATCHVANE_AUTO_REFRESH") or
                                   CONFIG.get("auto_refresh_minutes", 15)),
                     help="minutes between automatic collections")
-    ap.add_argument("--hash-passphrase", action="store_true",
-                    help="make a passphrase hash for a deployment, then exit")
     ap.add_argument("--check", action="store_true",
                     help="validate the configuration and exit")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     VERBOSE = args.verbose
 
-    if args.hash_passphrase:
-        return make_passphrase()
+    os.makedirs(PEOPLE, exist_ok=True)
 
     bad = problems()
     if args.check:
@@ -2134,7 +2315,6 @@ def main() -> int:
     # Collecting happens per person, once they sign in.  The only thing to
     # do at startup is catch up anyone who has one already but is stale,
     # which the scheduler does on its own.
-    os.makedirs(PEOPLE, exist_ok=True)
     migrate_single_user()
     migrate_secrets()
 
@@ -2156,6 +2336,7 @@ def main() -> int:
     if not CLOUD:
         log("open http://%s:%d/" % (shown, args.port))
     log("sign-in: %s, %s" % (sign_in_wants(), who_may()))
+    log("accounts: %d" % accounts.count())
     people = known_people()
     if people:
         log("%d dashboard(s) on disk; collecting only for whoever is signed in"

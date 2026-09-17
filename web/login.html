@@ -36,63 +36,183 @@
     reply, carrying a Reviewed-by, applied to a maintainer tree, sitting in
     linux-next, or merged.</p>
     <ul class="loginfacts">
+      <li>Sign up with the address you send patches from. That is the one it follows.</li>
       <li>Nothing is written to any kernel list. It only reads.</li>
-      <li>Sign in and it tracks your address. Nobody sees anybody else's.</li>
-      <li>Reviewer addresses are masked before they leave the machine.</li>
+      <li>Your dashboard is yours. Nobody else who signs in can reach it.</li>
     </ul>
   </div>
 
-  <form class="loginbox" method="post" action="/login">
-    <h2>Sign in</h2>
-    <p class="lead" id="lead">Checking what this server accepts&hellip;</p>
+  <div class="loginbox" id="card">
+    <div class="err hidden" id="err" role="alert"></div>
 
-    <div class="err hidden" id="err"></div>
+    <!-- ------------------------------------------------------- sign in -->
+    <section class="step" id="step-signin">
+      <h2>Sign in</h2>
+      <p class="lead">Your username or the address you signed up with.</p>
 
-    <div class="seg pick hidden" id="pick">
-      <button type="button" data-method="gmail">Gmail app password</button>
-      <button type="button" data-method="passphrase">Passphrase</button>
-    </div>
-    <input type="hidden" name="method" id="method" value="gmail">
-
-    <div id="gmailfields" class="hidden">
       <div class="field">
-        <label for="email">Gmail address</label>
-        <input id="email" name="email" type="email" autocomplete="username"
-               placeholder="you@gmail.com">
+        <label for="who">Username or email</label>
+        <input id="who" name="who" type="text" autocomplete="username"
+               autocapitalize="off" spellcheck="false" placeholder="you, or you@example.com">
+        <p class="fielderr" id="e-who"></p>
       </div>
       <div class="field">
-        <label for="password">App password</label>
-        <input id="password" name="password" type="password"
-               autocomplete="current-password" placeholder="16 characters">
+        <label for="password">Password</label>
+        <span class="pwwrap">
+          <input id="password" name="password" type="password"
+                 autocomplete="current-password" placeholder="your password">
+          <button type="button" class="peek" data-peek="password"
+                  aria-label="Show password">show</button>
+        </span>
+        <p class="fielderr" id="e-password"></p>
       </div>
-    </div>
 
-    <div class="hidden" id="passfield">
+      <button class="btn primary" type="button" id="go-signin">Sign in</button>
+      <div class="linkrow">
+        <button type="button" class="link" data-go="forgot">Forgot password?</button>
+        <button type="button" class="link" data-go="signup" id="to-signup">Create an account</button>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------------- sign up -->
+    <section class="step hidden" id="step-signup">
+      <h2>Create your account</h2>
+      <p class="lead">Use the address you send patches from &mdash; that is
+      the one Patchvane follows. Everything marked <b class="req">*</b> is needed.</p>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="first">First name <b class="req">*</b></label>
+          <input id="first" type="text" autocomplete="given-name"
+                 maxlength="40" placeholder="as you sign patches">
+          <p class="fielderr" id="e-first"></p>
+        </div>
+        <div class="field">
+          <label for="last">Last name <b class="req">*</b></label>
+          <input id="last" type="text" autocomplete="family-name"
+                 maxlength="40" placeholder="">
+          <p class="fielderr" id="e-last"></p>
+        </div>
+      </div>
+
       <div class="field">
-        <label for="passphrase">Passphrase</label>
-        <input id="passphrase" name="passphrase" type="password"
-               autocomplete="one-time-code" placeholder="the one you set">
+        <label for="username">Username <b class="req">*</b></label>
+        <input id="username" type="text" autocomplete="username" maxlength="20"
+               autocapitalize="off" spellcheck="false" placeholder="letters, numbers, underscores">
+        <p class="fielderr" id="e-username"></p>
       </div>
-      <!-- A passphrase says you may come in, but not who you are, so the
-           dashboard has to be told whose patches to show. -->
+
       <div class="field">
-        <label for="track">Whose patches to track</label>
-        <input id="track" name="track" type="email" autocomplete="email"
-               data-optional="1"
-               placeholder="the address you send patches from">
-        <p class="hint">Only used to know whose patches to collect. Leave it
-        blank to use the address this server was set up with.</p>
+        <label for="gender">Gender <b class="req">*</b></label>
+        <select id="gender">
+          <option value="">Choose one</option>
+          <option value="female">Woman</option>
+          <option value="male">Man</option>
+          <option value="other">Another term</option>
+          <option value="private">Rather not say</option>
+        </select>
+        <p class="hint tiny">Only used to greet you properly.</p>
+        <p class="fielderr" id="e-gender"></p>
       </div>
-    </div>
 
-    <button class="btn primary" type="submit" id="go">Sign in</button>
+      <div class="field">
+        <label for="email">Email <b class="req">*</b></label>
+        <input id="email" type="email" autocomplete="email" maxlength="254"
+               autocapitalize="off" spellcheck="false"
+               placeholder="the address on your Signed-off-by">
+        <p class="fielderr" id="e-email"></p>
+      </div>
 
-    <p class="note hidden" id="note">
-      Google will not accept your account password here, only an app password.
-      Create one at <code>myaccount.google.com/apppasswords</code>. It is
-      checked against Gmail and never stored.
-    </p>
-  </form>
+      <button class="btn primary" type="button" id="go-signup">Send me a code</button>
+      <div class="linkrow">
+        <span class="hint tiny">Already have an account?</span>
+        <button type="button" class="link" data-go="signin">Sign in</button>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- forgot -->
+    <section class="step hidden" id="step-forgot">
+      <h2>Forgot your password</h2>
+      <p class="lead">Give the address your account is under and a code will
+      be on its way.</p>
+
+      <div class="field">
+        <label for="fmail">Registered email</label>
+        <input id="fmail" type="email" autocomplete="email" maxlength="254"
+               autocapitalize="off" spellcheck="false" placeholder="you@example.com">
+        <p class="fielderr" id="e-fmail"></p>
+      </div>
+
+      <button class="btn primary" type="button" id="go-forgot">Send me a code</button>
+      <div class="linkrow">
+        <button type="button" class="link" data-go="signin">Back to sign in</button>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------- code -->
+    <section class="step hidden" id="step-code">
+      <h2>Check your inbox</h2>
+      <p class="lead">A six digit code is on its way to
+      <b id="sentto">your address</b>. It expires in <span id="mins">10</span>
+      minutes.</p>
+
+      <div class="otp" id="otp">
+        <input type="text" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="1" aria-label="Digit 1">
+        <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 2">
+        <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 3">
+        <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 4">
+        <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 5">
+        <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 6">
+      </div>
+      <p class="fielderr mid" id="e-code"></p>
+
+      <button class="btn primary" type="button" id="go-code">Verify</button>
+      <div class="linkrow">
+        <button type="button" class="link" id="resend">Send another code</button>
+        <button type="button" class="link" id="startover">Use a different address</button>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- password -->
+    <section class="step hidden" id="step-password">
+      <h2 id="pwtitle">Choose a password</h2>
+      <p class="lead" id="pwlead">Last step. Make it one you do not use
+      anywhere else.</p>
+
+      <div class="field">
+        <label for="pw1">Password</label>
+        <span class="pwwrap">
+          <input id="pw1" type="password" autocomplete="new-password"
+                 maxlength="128" placeholder="at least 8 characters">
+          <button type="button" class="peek" data-peek="pw1"
+                  aria-label="Show password">show</button>
+        </span>
+        <div class="pwmeter" id="meter" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </div>
+        <ul class="rules" id="rules">
+          <li data-rule="len">8 characters or more</li>
+          <li data-rule="upper">a capital letter</li>
+          <li data-rule="lower">a lowercase letter</li>
+          <li data-rule="digit">a number</li>
+          <li data-rule="symbol">a symbol</li>
+        </ul>
+        <p class="fielderr" id="e-pw1"></p>
+      </div>
+
+      <div class="field">
+        <label for="pw2">Type it again</label>
+        <input id="pw2" type="password" autocomplete="new-password"
+               maxlength="128" placeholder="the same one">
+        <p class="fielderr" id="e-pw2"></p>
+      </div>
+
+      <button class="btn primary" type="button" id="go-password">Create account</button>
+      <p class="note">Patchvane will never email you your password, and will
+      never ask for it anywhere but this page.</p>
+    </section>
+  </div>
 </div>
 
 <script src="login.js"></script>

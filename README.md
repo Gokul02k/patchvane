@@ -85,19 +85,24 @@ cookie, and starts the server in the background. There is no install step:
 `requirements.txt` lists nothing, because the whole of this runs on the
 standard library.
 
-Sign in, and it starts collecting the patches you posted from that address.
-The first run takes a few minutes because it reads the whole lore archive for
-you; after that the server keeps collecting on a timer. There is nothing to
-configure first — signing in tells it who you are.
+Make an account with the address you send patches from, and it starts
+collecting the patches you posted from it. The first run takes a few minutes
+because it reads the whole lore archive for you; after that the server keeps
+collecting on a timer. There is nothing to configure first — signing up tells
+it who you are.
+
+Running it on your own machine, the code that proves the address is yours is
+written to the terminal the server is running in, so there is nothing to set
+up to get in.
 
 [docs/running.md](docs/running.md) covers the rest: the other `run.sh` flags,
-both ways of signing in, and how refreshing works.
+signing up and signing in, and how refreshing works.
 
 ## The documentation
 
 | | |
 | --- | --- |
-| [Running it](docs/running.md) | Starting the server, signing in, refreshing, and what to do when a collection comes back empty |
+| [Running it](docs/running.md) | Starting the server, signing up, refreshing, and what to do when a collection comes back empty |
 | [What it looks like](docs/screenshots.md) | Every page of the dashboard |
 | [How it works](docs/how-it-works.md) | Where the patches come from, how each is classified, and what the numbers mean |
 | [The assistant](docs/assistant.md) | Adding a model, what it is asked, and what leaves the machine |

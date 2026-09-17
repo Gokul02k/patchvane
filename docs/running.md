@@ -54,26 +54,34 @@ python3 src/serve.py --interval 5    # collect every five minutes
 python3 src/serve.py --no-auto       # only collect when you ask
 ```
 
-## Signing in
+## Signing up, and signing in
 
-Two ways in, and the sign-in page lets you pick between them.
+Make an account once: your name, a username, and the address you send patches
+from. A six digit code goes to that address, and typing it back is what proves
+the address is yours. Then choose a password, and you are in.
 
-**A Gmail address and a Google app password.** Not your account password;
-Google refuses those over IMAP. Create one at
-`myaccount.google.com/apppasswords`. The password goes to Gmail to be
-checked and is then discarded.
+That address is the one Patchvane follows. Any address works, not just Gmail:
+`@kernel.org`, `@amd.com`, a university, whatever is on your `Signed-off-by`.
 
-**A passphrase.** Make one with `python3 src/serve.py --hash-passphrase`, which
-prints the `PATCHVANE_PASSPHRASE_HASH` to export. Useful where the host blocks
-outbound IMAP, which several providers do. A passphrase says you may come in
-but not who you are, so that form also asks which address to track.
-
-Either is enough on its own. `PATCHVANE_REQUIRE_BOTH=1` turns that into an
-"and", for anyone who wants the second factor.
+After that, sign in with **either your username or your address**, and your
+password. Passwords are at least eight characters with a capital, a lowercase,
+a number and a symbol, and are kept as scrypt hashes; the password itself is
+never written down and never emailed. Forgotten it is the same shape: a code
+to your address, then a new password.
 
 Only a signed session token is kept, in a cookie, and the server holds no
 session table. The server listens on `127.0.0.1` by default, so nothing else
 on the network can reach it.
+
+### Getting the code sent
+
+Sending mail is the one thing here that needs an account somewhere else.
+Running on your own machine you need nothing: with no provider configured the
+code is written to the server's own log, which is the terminal you started it
+in. Read it from there and carry on.
+
+Anything reachable from the internet needs a real one. See
+[deploying](deploying.md#email) for that.
 
 Stopping the server signs you out: on a machine you run for yourself,
 stopping it is how you finish with it, and coming back to find somebody's

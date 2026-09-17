@@ -123,8 +123,8 @@
     "classify_limit": 200
   },
   "signin": {
-    "_about": "Addresses allowed to sign in with a Gmail app password. The tracked address above is always allowed. Everyone listed still has to log into their own mailbox to get in, so this grants read access to this dashboard and nothing else. MAINLINE_ALLOW_EMAILS overrides this list.",
+    "_about": "Addresses allowed to hold an account here. A bare @domain allows everybody at that domain. Everyone still has to read a code sent to their own address to get in, and an account grants a dashboard of that address's own patches and nothing else. Empty means anyone may sign up. PATCHVANE_ALLOW_EMAILS overrides this list, and PATCHVANE_ALLOW_SIGNUP=0 closes it to new accounts entirely.",
     "emails": []
   },
-  "_identity": "Left blank on purpose: this server collects for whoever signs in, and each of them gets their own dashboard. Set MAINLINE_OWNER only if you want a default for passphrase sign-in without typing an address."
+  "_identity": "Left blank on purpose: this server collects for whoever signs up, and each of them gets their own dashboard of the address they proved is theirs."
 }

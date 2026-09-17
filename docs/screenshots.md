@@ -39,7 +39,7 @@ Every page of the dashboard, as it actually renders.
 </details>
 
 <details>
-<summary><b>&#128274; Signing in</b> &#8212; an address and an app password, and nothing else to set up</summary>
+<summary><b>&#128274; Signing in</b> &#8212; a username or an address and a password; new accounts prove the address with a code</summary>
 <br>
 <img src="images/shot-login.png" alt="The sign-in page" width="100%">
 </details>

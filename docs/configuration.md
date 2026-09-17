@@ -5,9 +5,11 @@ Every setting in config.json, and what each file in the tree is for.
 `config.json`
 
 - `app_name`, `app_tagline` — what the sign-in page and window title say
-- `email`, `name` — whose contributions to track, and who may sign in
-- `signin.emails` — narrow sign-in to these addresses; empty means anyone
-  who can log into their own mailbox
+- `email`, `name` — a default address to track, for a server set up for one
+  person; normally left blank, because signing up says whose patches to follow
+- `signin.emails` — narrow accounts to these addresses; a bare `@domain`
+  allows everybody there, and empty means anyone who can read mail at the
+  address they sign up with
 - `cache_hours` — how long a fetched response stays fresh
 - `auto_refresh_minutes` — how often the server collects on its own
 - `netdev_outstanding_cap` — the limit `maintainer-netdev.rst` asks for, shown
@@ -35,7 +37,9 @@ written at run time stays at the top of the tree.
 ```
 src/
   collect.py    gathers everything, writes data.json
-  serve.py      web server, Gmail sign-in, refresh timer, assistant routes
+  serve.py      web server, sessions, refresh timer, assistant routes
+  accounts.py   who holds an account, password hashing, one-time codes
+  mailer.py     sends those codes and the welcome, over a provider's HTTPS API
   providers.py  the models the assistant can use, and the failover between them
   aiclass.py    asks a model about threads the regular expressions could not read
   vault.py      per-person secrets, encrypted where they sit
@@ -45,10 +49,10 @@ src/
 
 web/
   index.html    the dashboard shell
-  login.html    sign-in page
+  login.html    signing up, signing in, and forgetting a password
   app.js        views, tables and charts, no dependencies
   ui.js         data grid, charts and animation engine
-  login.js      the sign-in form
+  login.js      the steps that page moves through
   style.css     dark and light themes
 
 docs/           this documentation, and images/ holds the logo, the banner
@@ -63,8 +67,9 @@ config.json     what to collect
 notes.json      seeds Your turn → Your notes
 requirements.txt  empty on purpose: the standard library is the whole of it
 cache/          fetched responses, safe to delete
-people/         one directory per signed-in address: their patches, their notes
-                and their own encrypted vault.json of API keys (mode 0600)
+people/         one directory per address: their patches, their notes, their
+                account.json (name, username, scrypt password hash) and their
+                own encrypted vault.json of API keys, both mode 0600
 LICENSE         Apache License 2.0
 NOTICE          what the copyright covers, and the archives this reads
 ```

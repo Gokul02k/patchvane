@@ -81,10 +81,17 @@ PATCHVANE_DATA_DIR=$DATA
 PATCHVANE_TRUST_PROXY=1
 PATCHVANE_REQUIRE_HTTPS=1
 
-# Sign-in is open: anybody who can log into their own Gmail gets a dashboard
-# of their own patches, which is the point of putting it on the internet.
-# To make it yours alone, put your address here and restart:
-# PATCHVANE_ALLOW_EMAILS=you@gmail.com
+# Sign-up is open: anybody who can read mail at the address they give gets a
+# dashboard of their own patches, which is the point of putting it on the
+# internet.  To make it yours alone, put your address here and restart:
+# PATCHVANE_ALLOW_EMAILS=you@example.com
+
+# Sending a code to that address is what proves it is theirs, so a public
+# deployment needs a way to send mail.  The free way is your own Gmail,
+# through deploy/gmail-relay.gs; docs/deploying.md walks through it.
+# PATCHVANE_GAS_URL=
+# PATCHVANE_GAS_SECRET=
+# PATCHVANE_URL=https://$DOMAIN
 EOF
   chown root:patchvane "$CONF/patchvane.env"
   chmod 640 "$CONF/patchvane.env"

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Screenshot the dashboard for the README.
 
-Points a headless browser at a throwaway instance, signs in with a
-passphrase so no mail password is involved, and writes PNGs into docs/.
-The address on screen is replaced with a placeholder first: the patch data
-itself is public, but there is no reason for a README to carry anybody's
-inbox around.
+Points a headless browser at a throwaway instance, signs in as an account
+that already exists there, and writes PNGs into docs/.  The address on
+screen is replaced with a placeholder first: the patch data itself is
+public, but there is no reason for a README to carry anybody's inbox
+around.
+
+The instance is expected to have the account already: making one means
+reading a code out of a mailbox, which is not something to automate here.
+Run the throwaway server, sign up once by hand, then set SHOTS_USER and
+SHOTS_PASSWORD to what you chose.
 """
 import os
 import sys
@@ -13,12 +18,15 @@ import sys
 from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("SHOTS_BASE", "http://127.0.0.1:8901")
-PHRASE = os.environ.get("SHOTS_PHRASE", "readme-shots")
+USER = os.environ.get("SHOTS_USER", "")
+PASSWORD = os.environ.get("SHOTS_PASSWORD", "")
 TRACK = os.environ.get("SHOTS_TRACK", "")
 SHOWN = os.environ.get("SHOTS_SHOWN", "you@example.org")
 
 if not TRACK:
     sys.exit("Set SHOTS_TRACK to the address whose dashboard should be shot.")
+if not (USER and PASSWORD):
+    sys.exit("Set SHOTS_USER and SHOTS_PASSWORD to an account on that server.")
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "images")
 
 # Swap the real address for a placeholder everywhere it is rendered, including
@@ -72,21 +80,13 @@ def main():
                                   device_scale_factor=2)
         page = ctx.new_page()
 
-        # Sign in with the passphrase; no mailbox involved.
         page.goto(BASE + "/login", wait_until="networkidle")
         page.screenshot(path=os.path.join(OUT, "shot-login.png"))
         print("wrote shot-login.png")
 
-        for sel, val in (("input[name=email]", TRACK),
-                         ("input[name=track]", TRACK),
-                         ("input[type=password]", PHRASE),
-                         ("input[name=passphrase]", PHRASE)):
-            try:
-                if page.locator(sel).count():
-                    page.fill(sel, val)
-            except Exception:
-                pass
-        page.click("button[type=submit], input[type=submit]")
+        page.fill("#who", USER)
+        page.fill("#password", PASSWORD)
+        page.click("#go-signin")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(4000)
 

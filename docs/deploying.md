@@ -117,6 +117,8 @@ Render prompts for these from `render.yaml`. Mark the first and last secret.
 | `PATCHVANE_SECRET` | 48 random characters, see below |
 | `PATCHVANE_DATA_REPO` | `yourname/patchvane-data` |
 | `PATCHVANE_DATA_KEY` | the deploy key from step 2, or `PATCHVANE_DATA_TOKEN` if you made a token |
+| `PATCHVANE_GAS_URL` | the mail relay's `/exec` address, see [Email](#email) |
+| `PATCHVANE_GAS_SECRET` | the secret it and the server share |
 
 The secret signs session cookies and seals the vaults, so make it properly
 random and keep it:
@@ -309,34 +311,109 @@ know about.
 
 # Whichever route you took
 
-## Who can sign in
+## Email
 
-Anybody, by design. Somebody signs in with their own Gmail address and an
-app password, that password goes to Gmail to be checked and is not kept, and
-they get a dashboard of the patches **they** posted. Nobody sees anybody
-else's.
+A deployment has to be able to send, because a six digit code to the address
+somebody signed up with is what proves the address is theirs. Nothing else
+here sends mail, and nothing at all is sent to anybody who has not asked for
+it.
+
+**The obvious way does not work on a free host.** Render blocks outbound
+connections to ports 25, 465 and 587 on free services, and most free hosts
+have some version of the same rule, so an SMTP send does not fail — it hangs
+until it times out. Everything below goes over HTTPS on port 443 instead.
+
+### Through your own Gmail, for nothing
+
+Every transactional mail provider's free tier turns out to be a trial in
+disguise: it expires, or it needs a domain you have to buy, or one day it
+asks for a card. This does not, and it is also the one that arrives.
+
+`deploy/gmail-relay.gs` is a Google Apps Script web app — fifteen lines of
+Javascript in your own Drive behind an HTTPS URL — that calls
+`MailApp.sendEmail`. The mail is then sent by Gmail as you, from your own
+address, signed the way everything else you send is signed. That matters
+more than the price: a gmail.com address pushed through a bulk sender is the
+exact shape a spam filter is built to catch, and a sign-up code in a spam
+folder is somebody who cannot sign up.
+
+A hundred recipients a day on an ordinary account, 1,500 on Workspace, which
+is a hundred new accounts a day. The setting-up is written out at the top of
+the script; it is five minutes and there is no account to make anywhere. It
+ends with two variables:
+
+```
+PATCHVANE_GAS_URL=https://script.google.com/macros/s/..../exec
+PATCHVANE_GAS_SECRET=the shared secret you generated
+PATCHVANE_URL=https://yours.onrender.com
+```
+
+`PATCHVANE_URL` is what puts a working link in the welcome mail. Paste the
+`/exec` URL into a browser to check it is alive: it answers with how much of
+today's quota is left.
+
+### Or a provider, if you would rather
+
+[Mailjet](https://www.mailjet.com/pricing/) is the one with a free plan that
+is still a free plan: 6,000 a month, 200 a day, no card, and a single sender
+address verified by clicking a link in it rather than a domain you have to
+own. **Account settings → Senders & domains → Add a sender address**, then
+an API key and secret key from **API Key Management**:
+
+```
+PATCHVANE_MAILJET_KEY=...
+PATCHVANE_MAILJET_SECRET=...
+PATCHVANE_MAIL_FROM=the address you verified
+```
+
+Brevo, Resend, SendGrid and Mailgun work the same way with
+`PATCHVANE_BREVO_KEY`, `PATCHVANE_RESEND_KEY`, `PATCHVANE_SENDGRID_KEY`, or
+`PATCHVANE_MAILGUN_KEY` with `PATCHVANE_MAILGUN_DOMAIN`. On a paid instance
+where outbound SMTP is allowed, `PATCHVANE_SMTP_HOST`, `_SMTP_PORT`,
+`_SMTP_USER` and `_SMTP_PASSWORD` work too. Be warned that sending from a
+gmail.com address through any of these is what spam filters are most
+suspicious of; that is the argument for the route above.
+
+`python3 src/serve.py --check` says which one it will use. With none of them
+set the service still runs and everybody who has an account still signs in —
+the page says sign-up is unavailable rather than offering a form that cannot
+finish.
+
+## Who can sign up
+
+Anybody, by design. They give a name, a username and the address they send
+patches from, read a code out of that inbox, choose a password, and get a
+dashboard of the patches **they** posted. Nobody sees anybody else's.
 
 Collection stays polite as the number of people grows: the timer collects for
 one person per round, only for people whose session is still live, and the
 round comes round often enough that each of them is refreshed about every
-interval. Five sign-in attempts per address per five minutes, 120 API calls a
-minute.
+interval. Five wrong passwords per address per five minutes, eight codes sent
+per address per fifteen minutes, five wrong codes before a sign-up is torn
+down, 120 API calls a minute.
 
 To keep it to yourself instead, set `PATCHVANE_ALLOW_EMAILS` to your own
 address — in the service's environment on Render, or in
-`/etc/patchvane/patchvane.env` on Oracle — and restart.
+`/etc/patchvane/patchvane.env` on Oracle — and restart. It takes whole
+domains written as `@example.com`. `PATCHVANE_ALLOW_SIGNUP=0` closes the door
+behind the accounts that already exist.
 
 ## What you are holding for other people
 
 Running this for strangers makes you the keeper of their things, which is
 worth being deliberate about.
 
-Their **app password** is never written down: it goes to Gmail over IMAP to
-be checked and is dropped with the request. Their **API keys**, if they set
-any up for the assistant, sit in `people/<address>/vault.json`, mode 0600,
-sealed with a key derived from the server's secret, so one person signing in
-cannot read another's. Their **patch data** is public to begin with, gathered
-from lore.
+Their **password** is never held: `people/<address>/account.json` keeps an
+scrypt hash of it, mode 0600, and nothing that can be turned back into the
+password. It is never put in an email either, not even the welcome one.
+Their **API keys**, if they set any up for the assistant, sit in
+`people/<address>/vault.json`, mode 0600, sealed with a key derived from the
+server's secret, so one person signing in cannot read another's. Their
+**patch data** is public to begin with, gathered from lore.
+
+A half-finished sign-up — a name and an address with nothing proved about
+either — is never written down at all. It lives in memory for twenty-five
+minutes and then it is gone.
 
 On route A those vaults are also pushed to your private data repository, so
 that repository is as sensitive as the server is. Keep it private, and if the

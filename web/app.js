@@ -1423,21 +1423,27 @@ function setSources() {
 function viewProfile() {
   const st = S.status;
   const p = (S.data && S.data.profile) || {};
-  const who = p.email || st.who || "";
+  const acc = st.account || {};
+  const who = acc.email || p.email || st.who || "";
   const on = st.privacy || [];
   const cloud = st.mode === "cloud";
   const keys = (S.providers || []).filter((x) => x.ready);
+  /* The name on the account is the one they gave; the one on the patches is
+     whatever they put in their Signed-off-by. They are usually the same. */
+  const called = acc.name || p.name || who.split("@")[0] || "Signed in";
 
   return `<div class="row2" style="align-items:start">
     <div class="panel" data-reveal><header><h2>You</h2></header><div class="body">
       <div class="profilehead">
-        <span class="avatar big">${esc((who[0] || "?").toUpperCase())}</span>
+        <span class="avatar big">${esc((called[0] || "?").toUpperCase())}</span>
         <div>
-          <h3>${esc(p.name || who.split("@")[0] || "Signed in")}</h3>
+          <h3>${esc(called)}</h3>
           <p class="hint" style="margin:2px 0 0">${esc(who)}</p>
         </div>
       </div>
       <dl class="kv">
+        ${acc.username ? `<dt>Username</dt><dd>${esc(acc.username)}</dd>` : ""}
+        ${acc.since ? `<dt>Account since</dt><dd>${esc(ago(acc.since))}</dd>` : ""}
         <dt>Patches tracked</dt><dd>${(S.data && S.data.patches || []).length}</dd>
         <dt>Last collected</dt><dd>${st.generated ? esc(ago(st.generated)) : "not yet"}</dd>
         <dt>Assistant keys</dt>
@@ -2203,11 +2209,18 @@ function drawMiniProgress(p) {
 }
 
 /* Whose dashboard this is.  Taken from the session rather than the collected
-   file, so it is right even before anything has been collected. */
+   file, so it is right even before anything has been collected.
+
+   Their name if the account has one, because "Hemanth" in the corner reads
+   as your own page in a way that an email address does not.  The address is
+   still what identifies it, and is a hover away. */
 function showWho(email) {
+  const acc = (S.status && S.status.account) || {};
   const who = email || (S.status && S.status.who) || "";
-  $("userlabel").textContent = who;
-  $("avatar").textContent = (who[0] || "?").toUpperCase();
+  const label = acc.first || acc.username || who;
+  $("userlabel").textContent = label;
+  $("userlabel").parentElement.title = who || "Account";
+  $("avatar").textContent = (label[0] || "?").toUpperCase();
 }
 
 /* ------------------------------------------------------------------ data */
