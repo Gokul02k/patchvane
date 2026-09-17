@@ -3,15 +3,15 @@
 
 Local, the way it has always worked:
 
-    python3 serve.py                    http://127.0.0.1:8787
+    python3 src/serve.py                    http://127.0.0.1:8787
 
 Deployed, reachable from the internet, behind a TLS terminating proxy:
 
-    python3 serve.py --hash-passphrase  once, to make a passphrase hash
+    python3 src/serve.py --hash-passphrase  once, to make a passphrase hash
     PATCHVANE_MODE=cloud \
     PATCHVANE_SECRET=... \
     PATCHVANE_PASSPHRASE_HASH=... \
-    python3 serve.py
+    python3 src/serve.py
 
 Cloud mode refuses to start without a session secret and a passphrase hash,
 insists on HTTPS, masks every reviewer address on the way out and leaves the
@@ -57,6 +57,11 @@ import vault
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# The code lives in src/ and the rest of the tree hangs off the directory
+# above it: config.json and the local data beside it, the pages in web/.
+ROOT = os.path.dirname(HERE)
+WEB = os.path.join(ROOT, "web")
+
 
 def env(name: str, default: str = "") -> str:
     """A setting from the environment.
@@ -80,8 +85,8 @@ def env_flag(name: str, default: bool = False) -> bool:
 MODE = (env("PATCHVANE_MODE", "local") or "local").lower()
 CLOUD = MODE == "cloud"
 
-DATA_DIR = env("PATCHVANE_DATA_DIR") or HERE
-CONFIG_PATH = env("PATCHVANE_CONFIG") or os.path.join(HERE, "config.json")
+DATA_DIR = env("PATCHVANE_DATA_DIR") or ROOT
+CONFIG_PATH = env("PATCHVANE_CONFIG") or os.path.join(ROOT, "config.json")
 CONFIG = json.load(open(CONFIG_PATH))
 providers.configure((CONFIG.get("ai") or {}).get("endpoints"))
 
@@ -610,7 +615,7 @@ def run_collect(email: str, full: bool = False, why: str = "manual") -> tuple:
                "--for", email, "--out", home]
         if full:
             cmd += ["--fresh", "--all-trees"]
-        p = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True,
+        p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                            timeout=3600, env=dict(os.environ))
         lines = [l for l in (p.stderr or "").strip().splitlines() if l.strip()]
         summary = lines[-1].replace("[collect] ", "") if lines else "done"
@@ -1509,7 +1514,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send(code, json.dumps(obj).encode(), "application/json")
 
     def file_out(self, name: str):
-        path = os.path.join(HERE, os.path.basename(name))
+        path = os.path.join(WEB, os.path.basename(name))
         if not os.path.isfile(path):
             self.send(404, b"not found", "text/plain; charset=utf-8")
             return
@@ -1893,7 +1898,7 @@ def problems() -> list:
         bad.append("Nothing checks who is signing in. Leave "
                    "PATCHVANE_ALLOW_GMAIL on to sign in with your Gmail "
                    "address and an app password, or set a passphrase with: "
-                   "python3 serve.py --hash-passphrase")
+                   "python3 src/serve.py --hash-passphrase")
     # Gmail sign-in deliberately needs no address configured: the app password
     # is checked against the mailbox it claims to be, and whoever gets in gets
     # a dashboard of their own patches.  OWNER is only the passphrase route's

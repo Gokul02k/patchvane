@@ -170,13 +170,13 @@ PORT="${PATCHVANE_PORT:-${MAINLINE_PORT:-8787}}"
 INTERVAL="${PATCHVANE_INTERVAL:-${MAINLINE_INTERVAL:-30}}"
 
 if [ "${1:-}" = "--fg" ] || [ "${1:-}" = "-f" ]; then
-  exec "$PY" serve.py --host "$HOST" --port "$PORT" --interval "$INTERVAL"
+  exec "$PY" src/serve.py --host "$HOST" --port "$PORT" --interval "$INTERVAL"
 fi
 
 # Background by default: this is a dashboard somebody leaves running, and
 # holding the terminal for it only means the terminal cannot be used.
 : > "$LOGFILE"
-nohup "$PY" serve.py --host "$HOST" --port "$PORT" --interval "$INTERVAL" \
+nohup "$PY" src/serve.py --host "$HOST" --port "$PORT" --interval "$INTERVAL" \
       >> "$LOGFILE" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" > "$PIDFILE"

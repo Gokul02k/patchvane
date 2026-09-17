@@ -70,7 +70,7 @@ def main():
             page.evaluate("() => document.querySelectorAll('details')"
                           ".forEach(d => d.open = true)")
             page.wait_for_timeout(2500)
-            out = os.path.join(ROOT, "docs", "_preview-%s.png" % mode)
+            out = os.path.join(ROOT, "docs", "images", "_preview-%s.png" % mode)
             page.screenshot(path=out, full_page=True)
             print("wrote", out)
         b.close()

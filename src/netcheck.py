@@ -7,15 +7,15 @@ the network refused or the address really has posted nothing.  This asks
 the same hosts the same way the collector does, with the same library and
 the same User-Agent, and says what came back.
 
-    python3 netcheck.py                     the address in config.json
-    python3 netcheck.py you@example.com     somebody else's
+    python3 src/netcheck.py                     the address in config.json
+    python3 src/netcheck.py you@example.com     somebody else's
 
 When a network opens TLS and signs it again itself, the certificate doing
 that is sitting on the connection, and writing it into the system store is
 the whole fix.  This saves it:
 
-    python3 netcheck.py --save-ca           into ./network-ca/
-    python3 netcheck.py --save-ca /tmp/ca   somewhere else
+    python3 src/netcheck.py --save-ca           into ./network-ca/
+    python3 src/netcheck.py --save-ca /tmp/ca   somewhere else
 """
 
 import json
@@ -29,7 +29,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# config.json and the CA bundle sit at the top of the tree, a level up from
+# the code in src/.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def trust_store() -> list:
@@ -162,13 +164,13 @@ machine, Python included:
 
 Then forget the refusals already remembered and look again:
 
-    rm -rf cache/ && python3 netcheck.py""" % where)
+    rm -rf cache/ && python3 src/netcheck.py""" % where)
     return 0
 
 
 def config() -> dict:
     try:
-        with open(os.path.join(HERE, "config.json"), encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return {}
@@ -212,14 +214,14 @@ def main() -> int:
         at = args.index("--save-ca")
         rest = args[at + 1:]
         where = (rest[0] if rest and not rest[0].startswith("-")
-                 and "@" not in rest[0] else os.path.join(HERE, "network-ca"))
+                 and "@" not in rest[0] else os.path.join(ROOT, "network-ca"))
         host = urllib.parse.urlsplit(lore_base).hostname or "lore.kernel.org"
         return save_ca(host, where)
 
     who = (args[0] if args
            else os.environ.get("PATCHVANE_OWNER") or cfg.get("email") or "")
     if not who:
-        print("Which address? pass one: python3 netcheck.py you@example.com")
+        print("Which address? pass one: python3 src/netcheck.py you@example.com")
         return 2
 
     ua = "%s (%s)" % (cfg.get("user_agent", "patchvane/2.0"), who)
@@ -267,7 +269,7 @@ the machine up.
 The certificate is on the connection, so you do not have to go and find
 it. This writes it out and prints how to install it:
 
-      python3 netcheck.py --save-ca
+      python3 src/netcheck.py --save-ca
 
 If instead the issuer is a normal public authority, the store itself is
 the problem, and on Debian or Ubuntu this rebuilds it:
@@ -291,7 +293,7 @@ password and API key this reads open to whatever is in the way.""")
     if found:
         print("The archive can be read and it has your posts, so a collection")
         print("should fill the dashboard. If it does not, keep the output of:")
-        print("  python3 collect.py --for %s --out /tmp/pv --no-ai" % who)
+        print("  python3 src/collect.py --for %s --out /tmp/pv --no-ai" % who)
         return 0
     print("The archive answered, but has nothing posted from this address.")
     print("Check it is the address you send patches from; the one in From:,")

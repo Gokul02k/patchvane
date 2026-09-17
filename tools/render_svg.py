@@ -25,7 +25,7 @@ def main(src, w, h, stops):
                           " if (s && s.pauseAnimations) { s.setCurrentTime(t);"
                           " s.pauseAnimations(); } }", t)
             page.wait_for_timeout(200)
-            dest = os.path.join(HERE, "docs", "_check-%s-%s.png"
+            dest = os.path.join(HERE, "docs", "images", "_check-%s-%s.png"
                                 % (os.path.basename(src).split(".")[0], t))
             page.screenshot(path=dest)
             out.append(dest)

@@ -50,14 +50,19 @@ import vault
 from email.utils import parsedate_to_datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG = json.load(open(os.path.join(HERE, "config.json")))
+
+# src/ holds the code; config.json, the local data and web/ sit in the
+# directory above it.
+ROOT = os.path.dirname(HERE)
+WEB = os.path.join(ROOT, "web")
+CONFIG = json.load(open(os.path.join(ROOT, "config.json")))
 UA = CONFIG.get("user_agent", "patchvane/2.0")
 
 # The fetched pages are data, not code.  A deployment that keeps the checkout
 # read-only and pulls a new one over it needs them somewhere else, and the
 # same variable serve.py takes its data directory from decides where.  Unset,
 # which is every run from a clone, the cache sits beside the code as before.
-DATA_DIR = os.environ.get("PATCHVANE_DATA_DIR") or HERE
+DATA_DIR = os.environ.get("PATCHVANE_DATA_DIR") or ROOT
 
 # Whose patches this run is about, and where its answers go.  Both are
 # arguments rather than settings, because one server collects for everybody
@@ -65,7 +70,7 @@ DATA_DIR = os.environ.get("PATCHVANE_DATA_DIR") or HERE
 # config.json are only the default, for running this by hand.
 ME = (os.environ.get("PATCHVANE_OWNER") or os.environ.get("MAINLINE_OWNER") or CONFIG.get("email") or "").lower()
 NAME = CONFIG.get("name") or ""
-OUT_DIR = HERE
+OUT_DIR = ROOT
 CACHE = os.path.join(DATA_DIR, "cache")
 
 
@@ -74,7 +79,7 @@ def working_for(email: str, name: str = "", out_dir: str = "") -> None:
     global ME, NAME, OUT_DIR, CACHE, UA
     ME = (email or "").strip().lower()
     NAME = name or ""
-    OUT_DIR = out_dir or HERE
+    OUT_DIR = out_dir or ROOT
     # Archives like being able to tell who is fetching and reach them if it
     # is too much, so the address this run is for goes in the User-Agent
     # rather than a name baked into the config.
@@ -258,7 +263,7 @@ class Fetcher:
             # for the failure being described.
             return ("the TLS certificate could not be verified: %s. This "
                     "machine does not trust whoever signed it, so nothing "
-                    "can be read. Run python3 netcheck.py"
+                    "can be read. Run python3 src/netcheck.py"
                     % (getattr(exc, "verify_message", None)
                        or getattr(exc, "reason", None) or "no issuer found"))
         if isinstance(exc, ssl.SSLError):
@@ -2081,16 +2086,16 @@ def read_notes() -> list:
 
 
 def render_standalone(data: dict) -> None:
-    html = open(os.path.join(HERE, "index.html"), encoding="utf-8").read()
-    css = open(os.path.join(HERE, "style.css"), encoding="utf-8").read()
-    js = open(os.path.join(HERE, "app.js"), encoding="utf-8").read()
+    html = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
+    css = open(os.path.join(WEB, "style.css"), encoding="utf-8").read()
+    js = open(os.path.join(WEB, "app.js"), encoding="utf-8").read()
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     html = html.replace('<link rel="stylesheet" href="style.css">',
                         "<style>\n%s\n</style>" % css)
     html = html.replace('<script src="app.js"></script>',
                         "<script>window.__DATA__ = %s;</script>\n<script>\n%s\n"
                         "</script>" % (blob, js))
-    dst = os.path.join(HERE, "dashboard.html")
+    dst = os.path.join(ROOT, "dashboard.html")
     with open(dst, "w", encoding="utf-8") as fh:
         fh.write(html)
     log("wrote %s (%.0f KB, opens without a server)"
@@ -2119,7 +2124,7 @@ def main() -> int:
     working_for(opts.get("for") or ME,
                 opts.get("name") or (CONFIG.get("name") if not opts.get("for")
                                      else ""),
-                opts.get("out") or HERE)
+                opts.get("out") or ROOT)
     if not ME or "@" not in ME:
         log("no address to collect for: pass --for someone@example.com")
         return 2

@@ -27,10 +27,10 @@ commits.
 Match what is already there rather than any general rule.
 
 Python is 4 spaces, lines under 79 characters, and standard library only.
-JavaScript is 2 spaces and no framework: `app.js` and `ui.js` are written
-against the DOM directly and are meant to stay that way. CSS keeps its
-colours in the custom properties at the top of `style.css`, so both themes
-follow from one place.
+JavaScript is 2 spaces and no framework: `web/app.js` and `web/ui.js` are
+written against the DOM directly and are meant to stay that way. CSS keeps
+its colours in the custom properties at the top of `web/style.css`, so both
+themes follow from one place.
 
 Comments explain why, not what. Most of the files open with a paragraph
 saying what the file is for, and that is usually the right place for

@@ -21,11 +21,11 @@ EnvironmentFile=/etc/patchvane/patchvane.env
 # Bound to localhost on purpose.  Caddy is the only thing that should be able
 # to reach it, so the port is not open to the internet even if the firewall is
 # wrong.
-ExecStart=/usr/bin/python3 /opt/patchvane/serve.py --host 127.0.0.1 --port 8787
+ExecStart=/usr/bin/python3 /opt/patchvane/src/serve.py --host 127.0.0.1 --port 8787
 
 # Refuse to start on a configuration that would be unsafe, rather than serving
 # with a cookie nobody signed.
-ExecStartPre=/usr/bin/python3 /opt/patchvane/serve.py --check
+ExecStartPre=/usr/bin/python3 /opt/patchvane/src/serve.py --check
 
 Restart=always
 RestartSec=3

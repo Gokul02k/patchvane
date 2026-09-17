@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Does it still compile
-        run: python3 -m compileall -q serve.py collect.py providers.py aiclass.py vault.py redact.py netcheck.py
+        run: python3 -m compileall -q src/
 
       # In cloud mode, because that is what the server runs and it checks
       # more: that HTTPS is required, and that a signing secret exists.
@@ -32,7 +32,7 @@ jobs:
         env:
           PATCHVANE_MODE: cloud
           PATCHVANE_SECRET: only-for-this-check-not-a-real-secret-at-all
-        run: python3 serve.py --check
+        run: python3 src/serve.py --check
 
   deploy:
     needs: check
@@ -52,7 +52,7 @@ jobs:
           # Before there is a server to deploy to, say so and stop. A red
           # cross on every push would only teach you to ignore it.
           if [ -z "$DEPLOY_HOST" ]; then
-            echo "::notice::No DEPLOY_HOST secret yet, so there is nowhere to deploy. DEPLOY.md, step 5."
+            echo "::notice::No DEPLOY_HOST secret yet, so there is nowhere to deploy. docs/deploying.md, step 5."
             exit 0
           fi
 

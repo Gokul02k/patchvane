@@ -32,7 +32,7 @@ read another's keys, and a copy of the disk must not be a list of everybody's.
 
 That sealing is hand-built, and you should know it before you rely on it.
 The project takes no dependencies and the standard library has no AES, so
-`vault.py` uses an HMAC-SHA256 keystream in the shape of AES-CTR, with
+`src/vault.py` uses an HMAC-SHA256 keystream in the shape of AES-CTR, with
 encrypt-then-MAC over the result. The reasoning is written out at the top of
 that file. It is the kind of construction that is worth a second pair of
 eyes, and a report about it is a report worth having.
@@ -44,7 +44,7 @@ restart rolls the epoch and signs everybody out, unless
 `PATCHVANE_SESSION_EPOCH` is set by hand.
 
 **What is sent to a model**, when the assistant is used, is narrowed first:
-`redact.py` masks reviewer addresses before anything leaves the machine, and
+`src/redact.py` masks reviewer addresses before anything leaves the machine, and
 `PATCHVANE_PRIVACY` can withhold private notes and message excerpts as well.
 
 ## Limits that are deliberate, not bugs

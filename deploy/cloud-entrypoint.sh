@@ -180,11 +180,11 @@ if keeping; then
 	ensure_ignores
 else
 	say "PATCHVANE_DATA_REPO or PATCHVANE_DATA_TOKEN is unset:"
-	say "nothing will survive a restart. DEPLOY.md says how to set them."
+	say "nothing will survive a restart. docs/deploying.md says how to set them."
 	mkdir -p "$DATA"
 fi
 
-python3 "$APP/serve.py" --host "${PATCHVANE_BIND:-0.0.0.0}" --port "$PORT" &
+python3 "$APP/src/serve.py" --host "${PATCHVANE_BIND:-0.0.0.0}" --port "$PORT" &
 server=$!
 napper=
 

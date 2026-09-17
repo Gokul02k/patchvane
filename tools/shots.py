@@ -19,7 +19,7 @@ SHOWN = os.environ.get("SHOTS_SHOWN", "you@example.org")
 
 if not TRACK:
     sys.exit("Set SHOTS_TRACK to the address whose dashboard should be shot.")
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "images")
 
 # Swap the real address for a placeholder everywhere it is rendered, including
 # the avatar initials and any title attribute.

@@ -11,7 +11,7 @@ people/
 cache/
 __pycache__/
 
-# Certificates netcheck.py --save-ca pulls off this network, to be installed
+# Certificates src/netcheck.py --save-ca pulls off this network, to be installed
 # on this machine.  They belong to whoever runs it, not to the project.
 network-ca/
 
@@ -23,5 +23,5 @@ secrets.json*
 
 # Renders written by tools/preview_readme.py and tools/render_svg.py.
 _preview-*.html
-docs/_preview-*.png
-docs/_check-*.png
+docs/images/_preview-*.png
+docs/images/_check-*.png

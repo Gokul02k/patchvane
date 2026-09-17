@@ -9,7 +9,7 @@
 #
 # What it does not do, because it cannot from inside the machine: open 80 and
 # 443 in the cloud provider's own firewall.  On Oracle that is the VCN
-# security list, and it is the step everybody forgets.  DEPLOY.md says where.
+# security list, and it is the step everybody forgets.  docs/deploying.md says where.
 
 set -euo pipefail
 

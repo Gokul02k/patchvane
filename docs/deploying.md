@@ -274,7 +274,7 @@ and still checks the configuration; it just says there is nowhere to deploy
 and stops, rather than failing.
 
 Once it is set, every push to `main` compiles the code and runs
-`serve.py --check` on GitHub's machine first. Only then does it reach yours,
+`src/serve.py --check` on GitHub's machine first. Only then does it reach yours,
 where it pulls, compiles again, and restarts the service. The unit runs
 `--check` once more as it comes up, this time with the deployment's own
 environment, which is the only place that can see the real configuration.
