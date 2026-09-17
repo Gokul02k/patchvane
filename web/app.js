@@ -2153,18 +2153,53 @@ function drawStamp() {
      could not be reached and the last known answer was used instead.  That
      is better than reporting nothing, but only if it is said out loud. */
   const old = S.data.stale;
+  const busy = S.busy || st.running;
   $("stampsub").textContent = S.offline ? "saved snapshot"
-    : S.busy || st.running ? "collecting now\u2026"
+    : busy ? ""
     : S.stale ? "new data ready"
     : st.last_error ? "last run failed"
     : old ? "some of this is from an earlier run"
     : st.auto === false ? "auto refresh off"
     : st.next_run ? "next in " + until(st.next_run) : "";
+  drawMiniProgress(busy && !S.offline ? st.progress : null);
   $("stampsub").title = old
     ? "Could not reach " + old.hosts.join(", ") + " on the last run, so the "
       + "answers from before were kept rather than reporting nothing."
     : "";
   showWho(S.data.profile.email || "");
+}
+
+/* How far the running collection has got, in the corner where the words
+   "collecting now" used to be.  Passed null when nothing is running, which
+   takes the bar off the page rather than leaving it at whatever it last
+   reached. */
+function drawMiniProgress(p) {
+  const bar = $("minibar"), fill = $("minifill"), pct = $("minipct");
+  if (!bar) return;
+  if (!p) {
+    bar.hidden = true;
+    /* Back to nothing, so the next collection grows from the left rather
+       than picking up where the previous one stopped. */
+    fill.style.width = "0";
+    bar.classList.remove("waiting");
+    return;
+  }
+  bar.hidden = false;
+  const n = typeof p.percent === "number" ? Math.max(0, Math.min(100, p.percent)) : null;
+  /* The collector counts what it has read, not what it has left, so there
+     is a stretch at the start with nothing to divide by. */
+  bar.classList.toggle("waiting", n === null);
+  if (n === null) {
+    pct.textContent = "";
+    bar.removeAttribute("aria-valuenow");
+  } else {
+    fill.style.width = n + "%";
+    pct.textContent = n + "%";
+    bar.setAttribute("aria-valuenow", n);
+  }
+  bar.title = p.label
+    ? p.label + (p.total ? " \u2014 " + p.done + " of " + p.total : "")
+    : "Collecting";
 }
 
 /* Whose dashboard this is.  Taken from the session rather than the collected
@@ -2344,6 +2379,19 @@ function adoptTheme(theme) {
     localStorage.setItem("patchvane-theme", theme);
     render();
   });
+}
+
+/* Twenty seconds is the right distance apart for "has anything changed",
+   and far too far apart for a bar that is supposed to be moving, which
+   would step once and look stuck between. So the loop closes up while a
+   collection is running and opens out again when it finishes. */
+function pollLoop() {
+  const soon = () => (S.busy || (S.status && S.status.running)) ? 2000 : 20000;
+  const again = () => setTimeout(async () => {
+    await pollStatus();
+    again();
+  }, soon());
+  again();
 }
 
 async function pollStatus() {
@@ -2557,7 +2605,7 @@ async function boot() {
 
   if (!S.offline) {
     setInterval(drawStamp, 20000);
-    setInterval(pollStatus, 20000);
+    pollLoop();
   }
 }
 

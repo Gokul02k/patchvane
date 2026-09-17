@@ -1183,8 +1183,13 @@ button.link:hover { text-decoration: underline; }
   .ttl h1 { font-size: 17px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
   /* When it was last collected is worth a line in the page, not a third of
-     the top bar. */
+     the top bar.  A collection actually running is different: that is worth
+     the room on any screen, so the stamp comes back carrying only the bar
+     for as long as one is going. */
   .stamp { display: none; }
+  .stamp:has(.minibar:not([hidden])) { display: flex; }
+  .stamp:has(.minibar:not([hidden])) b { display: none; }
+  .minibar .track { width: 56px; }
   .aibtn { width: 38px; height: 38px; padding: 0; justify-content: center; }
   .aibtn .btnlb { display: none; }
   .usermenu { padding: 3px; gap: 0; }
@@ -1297,6 +1302,46 @@ button.link.sm { font-size: 11px; margin-left: 6px; }
   justify-content: space-between; gap: 12px; font-size: 13px; }
 .progline .pct { font-variant-numeric: tabular-nums; color: var(--ink-3); }
 body.firstrun nav, body.firstrun .aibtn { opacity: .35; pointer-events: none; }
+
+/* The same thing in the corner, for a collection that is not the first one.
+   "Collecting now" said only that something was happening; this says how
+   much of it is left, in the width the sentence used to take. */
+.minibar { display: inline-flex; align-items: center; gap: 7px; }
+.minibar .track {
+  width: 74px; height: 4px; border-radius: 99px; overflow: hidden;
+  background: var(--line-2); flex: none;
+}
+.minibar .fill {
+  display: block; height: 100%; width: 0; border-radius: 99px;
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+  /* Slow, because the count behind it arrives in steps: easing the width
+     across the gap is what turns a row of jumps into one movement. */
+  transition: width var(--t-slow) var(--ease);
+  position: relative;
+}
+/* A sheen crossing the filled part, so a bar that is waiting on a slow
+   host still reads as working rather than stuck. */
+.minibar .fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent,
+              rgba(255,255,255,.45), transparent);
+  animation: sheen calc(var(--t-loop) * 1.6) linear infinite;
+}
+@keyframes sheen {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+.minibar .pct {
+  font-style: normal; font-size: 11.5px; font-variant-numeric: tabular-nums;
+  color: var(--ink-2); min-width: 30px;
+}
+/* Nothing to count yet: hold a short bar and run it along the track. */
+.minibar.waiting .fill { width: 38% !important; animation: creep 1.6s ease-in-out infinite; }
+.minibar.waiting .fill::after { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .minibar .fill::after { animation: none; }
+}
 
 /* The account menu in the corner. */
 .usermenu { position: relative; }
