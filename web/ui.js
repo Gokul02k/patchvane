@@ -162,12 +162,20 @@ function flip(container, selector, paint) {
   });
 
   if (!moved.length) return;
+  /* The same curve and the same clock as everything else on screen: the
+     stylesheet owns the motion scale, and a row sliding to its new place
+     should not be the one thing moving to its own time. */
+  const css = getComputedStyle(document.documentElement);
+  const how = "transform " + (css.getPropertyValue("--t-base").trim() || ".34s")
+            + " " + (css.getPropertyValue("--ease").trim() || "ease-out");
   requestAnimationFrame(() => {
     moved.forEach((el) => {
-      el.style.transition = "transform .42s cubic-bezier(.2,.8,.25,1)";
+      el.style.transition = how;
+      el.style.willChange = "transform";
       el.style.transform = "";
       el.addEventListener("transitionend", () => {
         el.style.transition = "";
+        el.style.willChange = "";
       }, { once: true });
     });
   });
