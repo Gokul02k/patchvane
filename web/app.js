@@ -1155,9 +1155,10 @@ function setGeneral() {
               + "otherwise"
             : "nothing is sent"}</div></div>
       </div>
-      <p class="hint">It goes to <strong>${esc(st.who || "your address")}</strong>
-      after a collection finds a commit of yours in mainline that was not
-      there last time, with the subject, the commit and when it landed.
+      <p class="hint">It goes to the address on your account &mdash; Profile
+      has it &mdash; after a collection finds a commit of yours in mainline
+      that was not there last time, with the subject, the commit and when it
+      landed.
       Switching it on now does not mean hearing about everything that has
       already landed: what has been seen is remembered either way, so you get
       the next one, not the back catalogue.</p>
@@ -1498,23 +1499,120 @@ function viewDiscover() {
 
 function findTyped(which, value) { S.find[which] = value; }
 
-function searchRow(which, go, value, placeholder, busy, label) {
+function searchRow(which, go, value, placeholder, busy, label, extra) {
   return `<div class="findrow" data-reveal>
-    <input type="search" data-find="${which}" value="${esc(value)}"
-           placeholder="${esc(placeholder)}" spellcheck="false"
-           autocapitalize="off" ${actv("input", findTyped, which)}>
+    <div class="findbox">
+      <input type="search" data-find="${which}" value="${esc(value)}"
+             placeholder="${esc(placeholder)}" spellcheck="false"
+             autocomplete="off" autocapitalize="off"
+             ${actv("input", findTyped, which)}>
+      ${extra || ""}
+    </div>
     <button class="btn primary" ${act(go)} ${busy ? "disabled" : ""}>${
       busy ? "Looking\u2026" : esc(label)}</button>
   </div>`;
+}
+
+/* ------------------------------------------- who they might mean
+
+   A name is what somebody has in front of them on a patch; an address is
+   what they would have to go and look up first. So the box takes either,
+   and offers what it knows while they type.
+
+   The list is redrawn in place rather than through render(), because
+   rebuilding the view under a search box takes the cursor and the selection
+   with it, and a suggestion list that resets what you are typing is worse
+   than no suggestion list. */
+
+function findSuggestBox() {
+  const list = S.find.people || [];
+  if (!S.find.sugOpen || !list.length) return `<div id="findsug"></div>`;
+  return `<div id="findsug" class="sugmenu">${list.map((w, i) => `
+    <button class="${i === S.find.sugAt ? "on" : ""}"
+      ${act(findPick, w.email)}>
+      <strong>${esc(w.name || w.email)}</strong>
+      <i>${esc(w.name ? w.email : "")}${w.from === "MAINTAINERS"
+        ? (w.name ? " \u00b7 " : "") + "in MAINTAINERS" : ""}</i>
+    </button>`).join("")}</div>`;
+}
+
+function drawSuggest() {
+  const box = document.getElementById("findsug");
+  if (box) box.outerHTML = findSuggestBox();
+}
+
+/* One request in flight and one queued, no more: this fires on every
+   keystroke, and the answer to "hema" is worthless once "hemanth" is typed. */
+function findSuggest(value) {
+  S.find.q = value;
+  S.find.sugAt = -1;
+  clearTimeout(S.find.sugTimer);
+  if ((value || "").trim().length < 2) {
+    S.find.people = [];
+    S.find.sugOpen = false;
+    drawSuggest();
+    return;
+  }
+  S.find.sugTimer = setTimeout(async () => {
+    const asked = value;
+    try {
+      const r = await fetch("/api/discover/people?q=" + encodeURIComponent(asked),
+                            { cache: "no-store" });
+      const body = await r.json();
+      /* They have typed on since this went out, so it is about a different
+         question now and its answer would flicker past on the way to the
+         right one. */
+      if (S.find.q !== asked) return;
+      S.find.people = body.people || [];
+      S.find.sugOpen = true;
+      drawSuggest();
+    } catch (e) { /* the box still works without help */ }
+  }, 180);
+}
+
+function findPick(email) {
+  S.find.q = email;
+  S.find.sugOpen = false;
+  S.find.people = [];
+  const box = document.querySelector("[data-find='q']");
+  if (box) box.value = email;
+  drawSuggest();
+  findGo();
+}
+
+/* Down, up and Enter through the list, because a suggestion list that can
+   only be reached with the mouse is half a suggestion list. */
+function findKeys(e) {
+  const list = S.find.people || [];
+  if (!S.find.sugOpen || !list.length) {
+    if (e.key === "Enter") { e.preventDefault(); findGo(); }
+    return;
+  }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    S.find.sugAt = (S.find.sugAt + step + list.length + 1) % (list.length + 1) - 1;
+    if (S.find.sugAt < 0) S.find.sugAt = list.length - 1;
+    drawSuggest();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (S.find.sugAt >= 0) findPick(list[S.find.sugAt].email);
+    else { S.find.sugOpen = false; drawSuggest(); findGo(); }
+  } else if (e.key === "Escape") {
+    S.find.sugOpen = false;
+    drawSuggest();
+  }
 }
 
 /* ---------------------------------------------------------- an author */
 
 async function findGo() {
   const q = (S.find.q || "").trim();
-  if (!q) { toast("Type an email address first.", "bad"); return; }
+  if (!q) { toast("Type a name or an email address first.", "bad"); return; }
   S.find.busy = true;
   S.find.error = "";
+  S.find.choices = [];
+  S.find.sugOpen = false;
   render();
   const r = await fetch("/api/discover/author?email=" + encodeURIComponent(q),
                         { cache: "no-store" });
@@ -1523,6 +1621,10 @@ async function findGo() {
   if (!out.ok) {
     S.find.author = null;
     S.find.error = out.error || "That lookup did not work. Try again.";
+    /* A name that belongs to more than one person: none was picked, because
+       showing a stranger's record under the name somebody typed is worse
+       than asking which of them they meant. */
+    S.find.choices = out.choices || [];
   } else {
     S.find.author = out;
   }
@@ -1567,8 +1669,8 @@ async function findDeep() {
 function findAuthorView() {
   const f = S.find;
   const head = searchRow("q", findGo, f.q,
-                         "an address they send patches from",
-                         f.busy, "Look them up");
+                         "a name, or an address they send patches from",
+                         f.busy, "Look them up", findSuggestBox());
   const blurb = `<p class="hint" style="margin:0 0 14px">Counted from
     patchwork and git.kernel.org, which is what everybody can see. Nothing
     here comes from anyone's dashboard.</p>`;
@@ -1580,15 +1682,21 @@ function findAuthorView() {
   }
   if (f.error) {
     return head + blurb + `<div class="panel wide"><div class="body">
-      <div class="empty"><h3>${esc(f.error)}</h3></div></div></div>`;
+      <div class="empty"><h3>${esc(f.error)}</h3>
+      ${(f.choices || []).length ? `<div class="whichone">${
+        f.choices.map((w) => `<button class="btn sm" ${act(findPick, w.email)}>
+          <strong>${esc(w.name || w.email)}</strong>
+          <span>${esc(w.name ? w.email : "")}</span></button>`).join("")}
+        </div>` : ""}</div></div></div>`;
   }
   if (!f.author) {
     return head + blurb + `<div class="panel wide"><div class="body">
       <div class="empty tall">
         <h3>Look up anybody who posts patches</h3>
-        <p>How much they have sent, how much was taken, what is queued in
-        linux-next and what has reached Linus' tree &mdash; with the commit
-        and the release it went out in.</p>
+        <p>By name or by address. How much they have sent, how much was
+        taken, what is queued in linux-next and what has reached Linus'
+        tree &mdash; with the commit and the exact tag it first appeared
+        in.</p>
       </div></div></div>`;
   }
   return head + authorResult(f.author);
@@ -1625,7 +1733,11 @@ function authorResult(a) {
 
   return `<div class="kpis four">${cards}</div>${notes}`
     + `<p class="hint" style="margin:0 0 14px">
-       ${esc(a.email)} &middot; <a href="${esc(a.lore)}" target="_blank"
+       ${a.name ? `<strong>${esc(a.name)}</strong> &middot; ` : ""}
+       ${esc(a.email)}${a.resolved
+         ? ` <span class="muted">(what &ldquo;${esc(a.asked)}&rdquo; commits under)</span>`
+         : ""} &middot;
+       <a href="${esc(a.lore)}" target="_blank"
        rel="noreferrer">their posts on lore \u2197</a> &middot;
        <a href="${esc(a.patchwork)}" target="_blank" rel="noreferrer">on
        patchwork \u2197</a> &middot; answered in ${esc(String(a.seconds))}s</p>`
@@ -1651,19 +1763,26 @@ function mergedTable(a) {
       here.</p></div></div></div>`;
   }
   return grid("findmerged", a.merged, [
+    /* The commit opens here rather than on git.kernel.org: reading three of
+       them should not be three tabs and three page loads. */
     { key: "short", label: "Commit", cls: "mono nowrap", csv: (r) => r.short,
-      render: (r) => `<a href="${esc(r.url)}" target="_blank"
-        rel="noreferrer">${mark(r.short)}</a>` },
-    { key: "subject", label: "Subject", cls: "subject", width: "50%",
+      render: (r) => `<button class="link mono" ${act(openCommit, r.commit)}
+        title="Read this commit">${mark(r.short)}</button>` },
+    { key: "subject", label: "Subject", cls: "subject", width: "46%",
       csv: (r) => r.subject, render: (r) => mark(r.subject) },
-    { key: "tag", label: "Released in", sortable: true,
+    /* The exact tag, release candidates included, because "v7.4-rc1" is the
+       answer and "v7.4" is only where it ends up.  Both are here: the
+       numbered release is the one somebody installs. */
+    { key: "tag", label: "First in", sortable: true,
       csv: (r) => r.tag,
       render: (r) => r.tag
         ? `<span class="pill ${r.shipped ? "green" : "cyan"}"
-             title="${r.shipped ? "shipped in this release"
-                                : "merged since the last release, so this is "
-                                  + "the one it is due in"}">${esc(r.tag)}${
-             r.shipped ? "" : " (due)"}</span>`
+             title="${r.shipped
+               ? "the first tag containing it; shipped in " + esc(r.release)
+               : "merged since the last release, so this is the tag it is "
+                 + "due in"}">${esc(r.tag)}${r.shipped ? "" : " (due)"}</span>${
+           r.release && r.release !== r.tag
+             ? `<span class="muted"> in ${esc(r.release)}</span>` : ""}`
         : `<span class="muted">\u2014</span>` },
     { key: "date", label: "Merged",
       render: (r) => `<span class="nowrap muted">${esc(r.date)}</span>` },
@@ -1673,7 +1792,7 @@ function mergedTable(a) {
       ? "the " + a.merged.length + " most recent; there are more"
       : a.merged.length + " commits",
     placeholder: "Search a commit or a subject\u2026",
-    searchIn: (r) => [r.subject, r.short, r.tag].join(" "),
+    searchIn: (r) => [r.subject, r.short, r.tag, r.release].join(" "),
     rowKey: (r) => r.commit,
     sort: "date", dir: "desc", per: 15,
   });
@@ -1688,8 +1807,8 @@ function queuedPanel(a) {
       <p class="hint" style="margin-top:0">Queued for a merge window and not
       in mainline yet.</p>
       <ul class="asklist plain">${a.in_next.map((c) =>
-        `<li><a href="${esc(c.url)}" target="_blank" rel="noreferrer"
-           class="mono">${esc(c.short)}</a> ${esc(c.subject)}
+        `<li><button class="link mono" ${act(openCommit, c.commit, "linux-next")}
+           >${esc(c.short)}</button> ${esc(c.subject)}
            <span class="muted">${esc(c.date)}</span></li>`).join("")}</ul>
     </div></div>`;
 }
@@ -2130,6 +2249,88 @@ function openThread(id, subject) {
     });
 }
 
+/* A commit, in the same drawer a patch opens in.
+
+   The list it was clicked in is still behind it, which is the whole point:
+   somebody scanning a year of somebody else's commits reads five of them,
+   and five tabs on git.kernel.org is five page loads and no way back to
+   where they were. The link out is still in the header, because cgit has
+   the diff and the history and this does not. */
+function openCommit(cid, tree) {
+  const which = tree || "mainline";
+  S.thread = { id: cid, kind: "commit", tree: which, loading: true,
+               subject: cid.slice(0, 12), data: null, error: "" };
+  $("thread").classList.add("open");
+  $("thscrim").classList.add("on");
+  drawThread();
+  fetch("/api/discover/commit?id=" + encodeURIComponent(cid)
+        + "&tree=" + encodeURIComponent(which),
+        { headers: { "X-Requested-With": "patchvane" } })
+    .then((r) => r.json())
+    .then((b) => {
+      if (!S.thread || S.thread.id !== cid) return;     /* they moved on */
+      if (b.ok) S.thread.data = b;
+      else S.thread.error = b.error || "could not read that commit";
+      S.thread.out = b.url || "";
+      S.thread.loading = false;
+      drawThread();
+    })
+    .catch((e) => {
+      if (!S.thread || S.thread.id !== cid) return;
+      S.thread.error = String(e.message || e);
+      S.thread.loading = false;
+      drawThread();
+    });
+}
+
+function drawCommit() {
+  const box = $("thbody");
+  const st = S.thread;
+  const lore = $("thlore");
+  lore.textContent = "git.kernel.org \u2197";
+
+  if (st.loading) {
+    $("thtitle").textContent = st.subject;
+    $("thsub").textContent = "reading the commit\u2026";
+    lore.style.display = "none";
+    box.innerHTML = `<div class="thwait"><span class="spin"></span>
+      Fetching it from git.kernel.org\u2026</div>`;
+    return;
+  }
+  if (st.error) {
+    $("thtitle").textContent = st.subject;
+    $("thsub").textContent = "";
+    /* The way out matters most when the way in did not work. */
+    lore.style.display = st.out ? "" : "none";
+    lore.href = st.out || "#";
+    box.innerHTML = `<div class="empty"><h3>${esc(st.error)}</h3></div>`;
+    return;
+  }
+
+  const c = st.data;
+  $("thtitle").textContent = c.subject || c.short;
+  $("thsub").textContent = [c.author, c.date, "in " + c.tree]
+    .filter(Boolean).join(" \u00b7 ");
+  lore.style.display = "";
+  lore.href = c.url;
+
+  box.innerHTML = `<section class="thsec"><dl class="kv">
+      <dt>Commit</dt><dd class="mono">${esc(c.commit)}</dd>
+      <dt>Author</dt><dd>${esc(c.author || "\u2014")}</dd>
+      ${c.committer && c.committer !== c.author
+        ? `<dt>Committed by</dt><dd>${esc(c.committer)}</dd>` : ""}
+      <dt>Date</dt><dd>${esc(c.date || "\u2014")}</dd>
+    </dl></section>
+    ${c.body ? `<section class="thsec"><h3>Message</h3>
+      <pre>${esc(c.body)}</pre></section>` : ""}
+    ${c.files.length ? `<section class="thsec">
+      <h3>${plural(c.files.length, "file")} changed</h3>
+      <ul class="filelist">${c.files.map((f) => `<li>
+        <span class="mono">${esc(f.path)}</span>
+        <span class="muted">${plural(f.changed, "line")}</span></li>`).join("")}
+      </ul></section>` : ""}`;
+}
+
 function closeThread() {
   const d = $("thread");
   const inside = d.contains(document.activeElement);
@@ -2149,8 +2350,10 @@ function drawThread() {
   const box = $("thbody");
   const st = S.thread;
   if (!st) return;
+  if (st.kind === "commit") { drawCommit(); return; }
   $("thtitle").textContent = st.subject || "Patch";
   const lore = $("thlore");
+  lore.textContent = "Open in lore";
 
   if (st.loading) {
     $("thsub").textContent = "reading the thread\u2026";
@@ -3308,14 +3511,29 @@ async function boot() {
   document.addEventListener("click", () => toggleWhoMenu(false));
   /* Enter in a Discover search box means search, because pressing it and
      having nothing happen is what every search box has taught people not to
-     expect. */
+     expect.  The author box has a suggestion list under it, so there Enter
+     and the arrows go to whichever of the two is showing. */
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
     const box = e.target.closest && e.target.closest("input[data-find]");
     if (!box) return;
+    if (box.dataset.find === "q") { findKeys(e); return; }
+    if (e.key !== "Enter") return;
     e.preventDefault();
     S.find[box.dataset.find] = box.value;
-    (box.dataset.find === "q" ? findGo : findSend)();
+    findSend();
+  });
+  /* Type-ahead for the author box only: the other box searches MAINTAINERS
+     by path, which is a different kind of question with no people in it. */
+  document.addEventListener("input", (e) => {
+    const box = e.target.closest && e.target.closest("input[data-find='q']");
+    if (box) findSuggest(box.value);
+  });
+  /* Clicking anywhere else puts the list away. */
+  document.addEventListener("click", (e) => {
+    if (!S.find.sugOpen) return;
+    if (e.target.closest && e.target.closest(".findbox")) return;
+    S.find.sugOpen = false;
+    drawSuggest();
   });
   $("aiinput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAI(); }

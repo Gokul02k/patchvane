@@ -1590,11 +1590,41 @@ body.firstrun nav .navitem.ready { opacity: 1; pointer-events: auto; }
 
 /* Discover: a search box, and what comes back from it. */
 .findrow { display: flex; gap: 10px; margin-bottom: 14px; }
+/* The box and the list under it move as one, so the list lands on the input
+   rather than somewhere near it. */
+.findbox { position: relative; flex: 1; min-width: 0; }
 .findrow input {
-  flex: 1; min-width: 0; padding: 11px 14px; font-size: 14px;
+  width: 100%; min-width: 0; padding: 11px 14px; font-size: 14px;
   color: var(--ink); background: var(--panel-2); border-radius: 11px;
   border: 1px solid var(--line);
 }
+
+/* Who they might mean, while they are still typing it. */
+.sugmenu { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 6px);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden;
+  animation: stepin var(--t-fast) var(--ease); }
+.sugmenu button { display: block; width: 100%; text-align: left; border: 0;
+  background: none; padding: 9px 13px; cursor: pointer; font: inherit; }
+.sugmenu button:hover, .sugmenu button.on { background: var(--panel-2); }
+.sugmenu strong { display: block; font-size: 13px; font-weight: 550;
+  color: var(--ink); }
+.sugmenu i { font-style: normal; font-size: 11.5px; color: var(--ink-3); }
+
+/* A name that belongs to more than one person. */
+.whichone { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  margin-top: 14px; }
+.whichone .btn { flex-direction: column; align-items: flex-start; gap: 1px;
+  height: auto; padding: 8px 12px; }
+.whichone .btn span { font-size: 11px; color: var(--ink-3); font-weight: 400; }
+
+/* The files one commit touched. */
+.filelist { list-style: none; margin: 0; padding: 0; }
+.filelist li { display: flex; gap: 12px; align-items: baseline;
+  padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.filelist li:last-child { border-bottom: 0; }
+.filelist .mono { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.filelist .muted { flex: none; font-size: 11.5px; }
 .findrow input:focus {
   outline: none; border-color: var(--blue);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);

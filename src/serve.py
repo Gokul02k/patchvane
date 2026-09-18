@@ -2030,7 +2030,35 @@ class Handler(BaseHTTPRequestHandler):
                                     "That is a lot of lookups. Give it a "
                                     "minute."})
                 return
-            self.json_out(200, discover.author((q.get("email") or [""])[0]))
+            # A name is as good as an address here: nobody remembers an
+            # address, and the name is the thing in front of them on the
+            # patch they are asking about.
+            typed = (q.get("email") or q.get("q") or [""])[0]
+            found = discover.resolve(typed)
+            if not found.get("ok"):
+                self.json_out(200, {"ok": False, "error": found.get("error"),
+                                    "choices": found.get("choices") or [],
+                                    "asked": typed})
+                return
+            out = discover.author(found["email"])
+            out["asked"] = typed
+            # Said back, so somebody who typed a name can see which address
+            # it turned into rather than wondering whose record this is.
+            out["resolved"] = found["email"] != discover.clean_email(typed)
+            self.json_out(200, out)
+        elif path == "/api/discover/commit":
+            if not DISCOVER_LIMIT.allow(self.client_ip()):
+                self.json_out(429, {"ok": False, "error":
+                                    "That is a lot of lookups. Give it a "
+                                    "minute."})
+                return
+            self.json_out(200, discover.commit(
+                (q.get("id") or [""])[0],
+                (q.get("tree") or ["mainline"])[0]))
+        elif path == "/api/discover/people":
+            self.json_out(200, {"ok": True,
+                                "people": discover.suggest(
+                                    (q.get("q") or [""])[0])})
         elif path == "/api/discover/maintainers":
             # No limiter: MAINTAINERS is fetched once a day and the rest is
             # a regex over a list already in memory, so this costs nothing

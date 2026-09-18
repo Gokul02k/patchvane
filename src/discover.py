@@ -170,6 +170,9 @@ CGIT_TITLE = re.compile(r"title='(\d{4}-\d\d-\d\d[^']*)'")
 # A "next page" link means the tree holds more than came back.  The
 # separator before it is &amp; in the markup, so nothing is anchored to it.
 CGIT_MORE = re.compile(r"ofs=\d+")
+# The cells of one row, so the author can be taken as "the one after the
+# subject" rather than by a pattern pinned to cgit's exact column order.
+CGIT_CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
 
 
 def strip_tags(s: str) -> str:
@@ -192,6 +195,22 @@ def when_of(row: str) -> tuple:
         except ValueError:
             continue
     return 0, stamp[:10]
+
+
+def row_author(row: str) -> str:
+    """The author named in one cgit log row.
+
+    cgit puts the columns in the order age, subject, author, and the theme
+    can add others, so this finds the cell holding the subject link and
+    takes the next one rather than counting from either end.  An empty
+    string when the column is not there, which costs nothing: this is used
+    to put a name to an address, and no name is a worse answer than a wrong
+    one only in the sense that it is no answer at all."""
+    cells = CGIT_CELL.findall(row)
+    for i, cell in enumerate(cells):
+        if "commit/?id=" in cell and i + 1 < len(cells):
+            return strip_tags(cells[i + 1])[:80]
+    return ""
 
 
 def cgit_log(path: str, email: str, limit: int = 100) -> dict:
@@ -225,6 +244,7 @@ def cgit_log(path: str, email: str, limit: int = 100) -> dict:
                 "commit": m.group(1),
                 "short": m.group(1)[:12],
                 "subject": subject,
+                "author": row_author(row),
                 "at": at,
                 "date": date,
                 "url": "%s%s/commit/?id=%s" % (KORG, path, m.group(1)),
@@ -252,7 +272,13 @@ RC = re.compile(r"^(v\d+\.\d+)-rc\d+$")
 
 
 def releases() -> dict:
-    """Every released kernel, oldest first, and the one being built now."""
+    """Every mainline tag, oldest first, and the release being built now.
+
+    Both kinds are kept and kept apart.  The release candidates are what
+    answer precisely -- the first tag that contains a commit is nearly
+    always an -rc, and "v7.4-rc1" is the true answer where "v7.4" is only
+    the eventual one.  The finals answer the other question people have,
+    which is which kernel they can actually install to get it."""
     def ask():
         body = fetch("%s%s/refs/tags/"
                      % (KORG, TREES["mainline"]), timeout=90)
@@ -261,36 +287,56 @@ def releases() -> dict:
         every = [(name, int(ts)) for name, ts in TAG.findall(body)]
         final = sorted(([n, t] for n, t in every if FINAL.match(n)),
                        key=lambda x: x[1])
+        # Every tag of either kind, in the order they were made, which is
+        # what "the first one that contains this commit" is read off.
+        every_tag = sorted(([n, t] for n, t in every
+                            if FINAL.match(n) or RC.match(n)),
+                           key=lambda x: x[1])
         # The release candidates name the version the merge window is
         # filling, which is where anything merged since the last release is
         # going.  Newest by tag date rather than by version number, which
         # sorts as text and would put v7.10 before v7.9.
         rcs = sorted(((RC.match(n).group(1), t) for n, t in every
                       if RC.match(n)), key=lambda x: x[1])
-        return {"final": final, "building": rcs[-1][0] if rcs else ""}
+        return {"final": final, "tags": every_tag,
+                "building": rcs[-1][0] if rcs else ""}
 
-    return cached("tags-v2", TTL_TAGS, ask) or {"final": [], "building": ""}
+    return cached("tags-v3", TTL_TAGS, ask) or {"final": [], "tags": [],
+                                                "building": ""}
 
 
 def release_for(when: int, tags: dict) -> dict:
-    """Which release a commit is in, and whether that release exists yet.
+    """Which tag a commit first appears in, and which release ships it.
 
     Worked out from dates, because cgit will not answer "git describe
-    --contains" over HTTP: the first release tagged after a commit reached
-    mainline is the release that carries it.  That is right for the ordinary
-    path a patch takes and wrong for one cherry-picked somewhere later,
-    which is why the page says "first released in" rather than claiming to
-    be the only place it appears.
+    --contains" over HTTP: the first tag made after a commit reached
+    mainline is the first tag that carries it.  That is right for the
+    ordinary path a patch takes and wrong for one cherry-picked somewhere
+    later, which is why the page says "first in" rather than claiming to be
+    the only place it appears.
 
-    A commit merged since the last release is in no tag at all.  Saying
-    nothing there would be silently wrong, so it names the version the merge
-    window is currently filling and says it is still to come."""
+    Two answers come back because there are two questions.  `tag` is the
+    exact one, release candidates included, and is what somebody checking
+    whether their patch made a particular -rc wants.  `release` is the
+    numbered kernel it ships in, which is what somebody deciding which
+    kernel to run wants.  A commit merged during the 7.4 merge window is
+    first in v7.4-rc1 and ships in v7.4, and those are both true.
+
+    A commit newer than every tag is in none of them.  Saying nothing would
+    be silently wrong, so it names the version the merge window is filling
+    and marks it as still to come."""
     if not when:
-        return {"tag": "", "shipped": False}
+        return {"tag": "", "release": "", "shipped": False}
+    exact = ""
+    for name, ts in tags.get("tags", []):
+        if ts >= when:
+            exact = name
+            break
     for name, ts in tags.get("final", []):
         if ts >= when:
-            return {"tag": name, "shipped": True}
-    return {"tag": tags.get("building", ""), "shipped": False}
+            return {"tag": exact or name, "release": name, "shipped": True}
+    return {"tag": exact, "release": tags.get("building", ""),
+            "shipped": False}
 
 
 # ----------------------------------------------------------- one author
@@ -301,6 +347,297 @@ def clean_email(s: str) -> str:
     # "Ada Lovelace <ada@example.org>" is what people paste out of a patch.
     m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", s)
     return m.group(0) if m else ""
+
+
+# ---------------------------------------------------- who anybody means
+
+# Nobody remembers an address.  They remember a name, and they have it in
+# front of them on a patch or in a review, so a search box that only takes
+# an address is asking them to go and look up the thing they came here to
+# look up.
+#
+# There are two halves to answering a name.  MAINTAINERS is the first and
+# does most of the work: it is four thousand kernel contributors with their
+# names against their addresses, it is already fetched here for the other
+# question this file answers, and every line of it is public by design.
+# The second half is that a name nobody has asked for before is resolved
+# against mainline and then written down, so the next person who types it
+# gets it straight away.
+#
+# What is written down is deliberately only an identity -- a name and the
+# address it commits under, both of which are in public git history.  Not
+# who asked, not when, not how often.  A file recording that is a log of
+# what the people using this server are interested in, which is a different
+# thing entirely from a directory of kernel contributors, and is nobody's
+# business.
+
+PEOPLE_FILE = os.path.join(DATA_DIR, "people.json")
+PEOPLE_CAP = 20000
+
+_LEARNT = {"at": 0.0, "map": {}}
+
+
+def learnt() -> dict:
+    """Addresses this server has resolved before, as {email: name}."""
+    with _LOCK:
+        if _LEARNT["map"] and time.time() - _LEARNT["at"] < 60:
+            return dict(_LEARNT["map"])
+    try:
+        with open(PEOPLE_FILE, encoding="utf-8") as fh:
+            found = json.load(fh).get("people") or {}
+    except (OSError, ValueError, AttributeError):
+        found = {}
+    if not isinstance(found, dict):
+        found = {}
+    with _LOCK:
+        _LEARNT["at"] = time.time()
+        _LEARNT["map"] = found
+    return dict(found)
+
+
+def remember(email: str, name: str = "") -> None:
+    """Note that this address belongs to this name.
+
+    Only ever called with an identity that came back from a public archive,
+    so nothing is recorded here that git.kernel.org would not tell anybody
+    who asked.  A name already on file is not overwritten with an empty
+    one: a lookup by address finds commits that may carry no name at all,
+    and that should not erase one MAINTAINERS knows."""
+    email = clean_email(email)
+    if not email:
+        return
+    found = learnt()
+    name = " ".join((name or "").split())[:80]
+    if found.get(email) and not name:
+        return
+    if found.get(email) == name:
+        return
+    found[email] = name
+    if len(found) > PEOPLE_CAP:
+        return
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = PEOPLE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"people": found}, fh)
+        os.replace(tmp, PEOPLE_FILE)
+    except OSError:
+        return
+    with _LOCK:
+        _LEARNT["at"] = time.time()
+        _LEARNT["map"] = found
+
+
+MAINT_LINE = re.compile(r"^(.*?)\s*<([^<>@\s]+@[^<>\s]+)>\s*$")
+
+
+def directory() -> list:
+    """Everybody this server can name, as [{"email", "name", "from"}].
+
+    MAINTAINERS first, because it is the larger and better half and its
+    names are the ones written down by the people they belong to."""
+    people = {}
+    for section in subsystems():
+        for kind in ("M", "R"):
+            for line in section["fields"].get(kind, []):
+                m = MAINT_LINE.match(line.strip())
+                if not m:
+                    continue
+                email = clean_email(m.group(2))
+                if email and email not in people:
+                    people[email] = {"email": email,
+                                     "name": " ".join(m.group(1).split()),
+                                     "from": "MAINTAINERS"}
+    for email, name in learnt().items():
+        if email in people:
+            continue
+        people[email] = {"email": email, "name": name, "from": "looked up"}
+    return list(people.values())
+
+
+def suggest(q: str, limit: int = 8) -> list:
+    """Who somebody might mean, while they are still typing it.
+
+    Ranked by where the match falls rather than by anything cleverer: a name
+    that starts with what was typed is almost always the one wanted, and a
+    match in the middle of an address almost never is."""
+    q = " ".join((q or "").split()).lower()
+    if len(q) < 2:
+        return []
+    hits = []
+    for who in directory():
+        name = (who["name"] or "").lower()
+        email = who["email"]
+        local = email.split("@")[0]
+        if name.startswith(q) or email.startswith(q):
+            rank = 0
+        elif any(w.startswith(q) for w in name.split()) or local.startswith(q):
+            rank = 1
+        elif q in name or q in email:
+            rank = 2
+        else:
+            continue
+        # A name is worth more than a bare address: it is what was typed.
+        hits.append((rank, 0 if who["name"] else 1, who["name"] or email, who))
+    hits.sort(key=lambda h: h[:3])
+    return [h[3] for h in hits[:limit]]
+
+
+NAME_OK = re.compile(r"^[^@<>]{2,80}$")
+
+
+def resolve(query: str) -> dict:
+    """Turn whatever was typed into an address to look up.
+
+    An address is taken as given.  A name is answered from the directory
+    first, and only if nothing there matches is mainline asked -- which
+    costs a request and change, and is the reason it is the second resort
+    rather than the first.
+
+    When several people match, none is chosen.  Picking one and being wrong
+    means showing somebody a stranger's record under the name they typed,
+    which is worse than asking."""
+    typed = " ".join((query or "").split())
+    direct = clean_email(typed)
+    if direct:
+        return {"ok": True, "email": direct}
+    if not NAME_OK.match(typed):
+        return {"ok": False, "error": "Type a name or an email address."}
+
+    known = suggest(typed, limit=12)
+    exact = [w for w in known
+             if (w["name"] or "").lower() == typed.lower()]
+    if len(exact) == 1:
+        return {"ok": True, "email": exact[0]["email"], "name": exact[0]["name"]}
+    if len(exact) > 1:
+        return {"ok": False, "choices": exact,
+                "error": "More than one person goes by that name."}
+    if len(known) == 1:
+        return {"ok": True, "email": known[0]["email"], "name": known[0]["name"]}
+    if len(known) > 1:
+        return {"ok": False, "choices": known,
+                "error": "Did you mean one of these?"}
+
+    found = by_name_in_mainline(typed)
+    if found:
+        remember(found["email"], found["name"])
+        return {"ok": True, "email": found["email"], "name": found["name"],
+                "learnt": True}
+    return {"ok": False, "error": "Nothing in MAINTAINERS or mainline is "
+                                  "under that name. An email address will "
+                                  "always work."}
+
+
+# The author line on a cgit commit page.  cgit uses <th> for the label and
+# some themes use <td>, so neither is assumed.
+CGIT_AUTHOR_MAIL = re.compile(
+    r"<t[hd][^>]*>\s*author\s*</t[hd]>\s*<td[^>]*>(.*?)&lt;([^&<]+)&gt;",
+    re.S | re.I)
+
+
+def by_name_in_mainline(name: str) -> dict:
+    """Find the address a name commits under.
+
+    cgit will search the author field, which holds the name and the address
+    together, so the log page finds the commits by name -- but it prints
+    only the name in the list, so the address has to come off one commit's
+    own page.  Two requests, and only ever for a name nobody has asked about
+    before, after which it is written down."""
+    log = cgit_log(TREES["mainline"], name, limit=1)
+    if not log["ok"] or not log["commits"]:
+        return {}
+    top = log["commits"][0]
+    body = fetch(top["url"], timeout=45)
+    if not body:
+        return {}
+    m = CGIT_AUTHOR_MAIL.search(body)
+    if not m:
+        return {}
+    email = clean_email(m.group(2))
+    if not email:
+        return {}
+    return {"email": email,
+            "name": (" ".join(strip_tags(m.group(1)).split())
+                     or top.get("author", ""))}
+
+
+# --------------------------------------------------------- one commit
+
+# A commit id in a list is the thing somebody wants to read, and a link that
+# opens git.kernel.org in another tab makes reading three of them a matter
+# of three tabs, three loads and finding the way back.  So the commit is
+# fetched here and shown where it was clicked.  The link out stays, because
+# a cgit page has the diff and the navigation and this does not.
+
+SHA = re.compile(r"^[0-9a-f]{7,40}$")
+COMMIT_SUBJECT = re.compile(
+    r"<div class='commit-subject'>(.*?)</div>", re.S)
+COMMIT_MSG = re.compile(r"<div class='commit-msg'>(.*?)</div>", re.S)
+COMMIT_INFO = re.compile(
+    r"<t[hd][^>]*>\s*(author|committer|commit)\s*</t[hd]>\s*<td[^>]*>(.*?)</td>"
+    r"(?:\s*<td[^>]*>(.*?)</td>)?", re.S | re.I)
+DIFFSTAT = re.compile(r"class='diffstat'.*?</table>", re.S)
+DIFFSTAT_ROW = re.compile(
+    r"<td class='upd'>.*?>([^<]+)</a></td>\s*<td[^>]*>(\d+)</td>", re.S)
+
+
+def commit(cid: str, tree: str = "mainline") -> dict:
+    """One commit, read off cgit and handed back as text.
+
+    Only the trees this server already knows about, and only something that
+    looks like a hash: the id and the tree both end up in a URL that this
+    process then fetches, and a search box that will fetch any address given
+    to it is a way to make this server read things on somebody else's
+    behalf."""
+    cid = (cid or "").strip().lower()
+    if not SHA.match(cid):
+        return {"ok": False, "error": "That is not a commit id."}
+    path = TREES.get(tree) or MAINTAINER_TREES.get(tree)
+    if not path:
+        return {"ok": False, "error": "That is not a tree this server reads."}
+
+    url = "%s%s/commit/?id=%s" % (KORG, path, urllib.parse.quote(cid))
+
+    def ask():
+        body = fetch(url, timeout=45)
+        if body is None:
+            return None
+        info = {}
+        for kind, value, extra in COMMIT_INFO.findall(body):
+            info.setdefault(kind.lower(), (strip_tags(value),
+                                           strip_tags(extra or "")))
+        subject = COMMIT_SUBJECT.search(body)
+        msg = COMMIT_MSG.search(body)
+        files = []
+        stat = DIFFSTAT.search(body)
+        if stat:
+            files = [{"path": htmllib.unescape(p), "changed": int(n)}
+                     for p, n in DIFFSTAT_ROW.findall(stat.group(0))][:200]
+        return {
+            "ok": True,
+            "commit": cid,
+            "short": cid[:12],
+            "tree": tree,
+            "url": url,
+            "subject": strip_tags(subject.group(1)) if subject else "",
+            "body": strip_tags(msg.group(1)) if msg else "",
+            "author": info.get("author", ("", ""))[0],
+            "date": info.get("author", ("", ""))[1],
+            "committer": info.get("committer", ("", ""))[0],
+            "files": files,
+            "changed": sum(f["changed"] for f in files),
+        }
+
+    out = cached("commit %s %s" % (tree, cid), TTL_TREES, ask)
+    if not out:
+        return {"ok": False, "url": url,
+                "error": "git.kernel.org did not answer for that commit."}
+    if not out.get("subject") and not out.get("body"):
+        # The page came back but was not a commit page -- a bad id gives
+        # cgit's error page, which is a 200.
+        return {"ok": False, "url": url,
+                "error": "No commit with that id in %s." % tree}
+    return out
 
 
 def author(email: str) -> dict:
@@ -366,6 +703,14 @@ def author(email: str) -> dict:
     out["in_next"] = queued[:30]
     out["deep"] = deep_state(email)
 
+    # An address that answered is an address worth offering next time.  The
+    # name comes off their own commits, which is the name they commit under
+    # and so the one somebody searching would type.
+    if merged or queued:
+        remember(email, (merged or queued)[0].get("author", ""))
+
+    out["name"] = learnt().get(email) or next(
+        (w["name"] for w in directory() if w["email"] == email), "")
     out["lore"] = "%s/all/?q=%s" % (LORE, urllib.parse.quote("f:" + email))
     out["patchwork"] = ("%s/project/all/list/?submitter=%s"
                         % (PATCHWORK, urllib.parse.quote(email)))
