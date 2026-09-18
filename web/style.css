@@ -1076,7 +1076,67 @@ button.link:hover { text-decoration: underline; }
 
 /* ------------------------------------------------------------ sign in */
 
+/* The moving background.  Two layers: three big soft lights that drift, and
+   over them a canvas of patches climbing towards mainline, which sky.js
+   draws.  Both sit behind everything and neither can be touched, so the
+   form in front is reached by tab and by pointer exactly as it was.
+
+   The lights are the cheap half deliberately.  A blurred gradient moved by
+   transform alone is one layer the compositor can keep on the GPU and
+   reuse: the blur is computed once, not on every frame, and no script runs
+   to keep them going.  Only the dots cost a frame loop, and there are a few
+   dozen of them. */
+.sky { position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  pointer-events: none; }
+.sky .glow { position: absolute; border-radius: 50%; filter: blur(64px);
+  will-change: transform; }
+.sky canvas { position: absolute; inset: 0; display: block;
+  width: 100%; height: 100%; }
+
+/* Off the edges on purpose: what shows is the shoulder of each light, so
+   they read as something large and far away rather than as three circles.
+   The three periods share no common factor worth having, so the pattern
+   they make together takes minutes to come round rather than pulsing. */
+.sky .g1 { width: 58vw; height: 58vw; left: -16vw; top: -18vw;
+  background: radial-gradient(circle, rgba(76,141,255,.40), transparent 65%);
+  animation: drift-a 37s var(--ease-bothways) infinite; }
+.sky .g2 { width: 48vw; height: 48vw; right: -12vw; top: 22vh;
+  background: radial-gradient(circle, rgba(45,212,191,.30), transparent 65%);
+  animation: drift-b 53s var(--ease-bothways) infinite; }
+.sky .g3 { width: 44vw; height: 44vw; left: 26vw; bottom: -20vw;
+  background: radial-gradient(circle, rgba(163,113,247,.24), transparent 66%);
+  animation: drift-c 67s var(--ease-bothways) infinite; }
+
+@keyframes drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(7vw, 9vh, 0) scale(1.12); }
+}
+@keyframes drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); }
+  50%      { transform: translate3d(-8vw, -11vh, 0) scale(.92); }
+}
+@keyframes drift-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(.96); }
+  50%      { transform: translate3d(6vw, -8vh, 0) scale(1.15); }
+}
+
+/* Light theme is never served on this page today, but the lights were
+   picked against a near-black background and would be a smear on a white
+   one, so they are dropped to where they read as tint rather than cloud. */
+html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
+
+/* A dot is a fixed number of pixels across, so on a phone it is the same
+   dot on a third of the screen -- and the column of text now spans the
+   whole width, leaving it nowhere to sit except behind the words.  Held
+   back to where it is still clearly moving but is no longer competing with
+   the sentence it is behind. */
+@media (max-width: 760px) {
+  .sky canvas { opacity: .5; }
+  .sky .glow { filter: blur(52px); opacity: .8; }
+}
+
 .loginpage {
+  position: relative; z-index: 1;
   min-height: 100vh; display: grid; grid-template-columns: 1fr 420px;
   align-items: center; gap: 48px; padding: 40px 6vw;
 }
@@ -1093,9 +1153,26 @@ button.link:hover { text-decoration: underline; }
 .loginfacts li::before { content: "\2713"; position: absolute; left: 0;
   color: var(--green); font-weight: 700; }
 
+/* The card is let through to the background rather than sitting on it: the
+   lights move behind the form and are blurred by it, which is what makes
+   the thing feel like glass instead of a panel with a picture behind it.
+   The border is lifted to --line-2 to compensate, since a translucent panel
+   loses its edge against a bright patch drifting past. */
 .loginbox {
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid var(--line-2); border-radius: var(--r);
   box-shadow: var(--shadow); padding: 28px; animation: rise var(--t-base) var(--ease);
+}
+
+/* Without a backdrop filter the blur is simply absent, and what is left is
+   a see-through card with a moving light behind the labels.  Legibility is
+   not the thing to gamble on the sign-in page, so those browsers get the
+   solid panel they had before and still get the drifting background around
+   it. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .loginbox { background: var(--panel); }
 }
 .loginbox h2 { font-size: 20px; letter-spacing: -.02em; }
 .loginbox .lead { margin: 7px 0 20px; font-size: 12.5px; color: var(--ink-3);

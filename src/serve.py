@@ -225,7 +225,16 @@ MAX_BODY = 64 * 1024
 # third on top of the bytes it carries, and accounts.AVATAR_MAX is what
 # decides whether the picture inside is small enough to keep.
 MAX_AVATAR_BODY = 384 * 1024
-STATIC = {"style.css", "ui.js", "app.js", "login.js", "index.html", "login.html"}
+STATIC = {"style.css", "ui.js", "app.js", "login.js", "sky.js", "index.html",
+          "login.html"}
+
+# What the sign-in page is built from.  Everything else under STATIC is
+# behind a session, but the page that asks for the session cannot be: these
+# have to be readable by somebody who has not signed in yet, or the form
+# arrives unstyled and inert.  Anything added to login.html belongs here
+# too, and the symptom of forgetting is the file being answered with the
+# login page itself, which the browser then refuses as the wrong type.
+PUBLIC_FILES = {"style.css", "login.js", "sky.js"}
 
 # Every inline handler was removed from the markup, so script-src needs no
 # 'unsafe-inline' and no 'unsafe-eval'.  That is the half that matters: if a
@@ -1675,7 +1684,7 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
-        if path in ("/style.css", "/login.js"):
+        if path.lstrip("/") in PUBLIC_FILES:
             self.file_out(path.lstrip("/"))
             return
 

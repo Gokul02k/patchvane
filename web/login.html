@@ -8,6 +8,16 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- Decoration, and announced as nothing else: three slow lights from the
+     stylesheet and a canvas of patches on their way to mainline. A reader
+     that speaks the page aloud should skip the lot. -->
+<div class="sky" aria-hidden="true">
+  <span class="glow g1"></span>
+  <span class="glow g2"></span>
+  <span class="glow g3"></span>
+  <canvas id="rise"></canvas>
+</div>
+
 <div class="loginpage">
   <div class="loginside">
     <div class="logo">
@@ -264,6 +274,7 @@
   </div>
 </div>
 
+<script src="sky.js"></script>
 <script src="login.js"></script>
 </body>
 </html>
