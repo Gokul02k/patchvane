@@ -55,6 +55,7 @@ from http.server import BaseHTTPRequestHandler
 
 import accounts
 import discover
+import feedback
 import mailer
 import providers
 import redact
@@ -225,8 +226,8 @@ MAX_BODY = 64 * 1024
 # third on top of the bytes it carries, and accounts.AVATAR_MAX is what
 # decides whether the picture inside is small enough to keep.
 MAX_AVATAR_BODY = 384 * 1024
-STATIC = {"style.css", "ui.js", "app.js", "login.js", "sky.js", "index.html",
-          "login.html"}
+STATIC = {"style.css", "ui.js", "app.js", "help.js", "login.js", "sky.js",
+          "index.html", "login.html"}
 
 # What the sign-in page is built from.  Everything else under STATIC is
 # behind a session, but the page that asks for the session cannot be: these
@@ -545,6 +546,12 @@ MAIL_LIMIT = Limiter(int(env("PATCHVANE_MAIL_TRIES", "8") or 8),
 # search box here is a search box pointed at someone else's server.  Answers
 # are cached and shared, so this only limits genuinely new questions.
 DISCOVER_LIMIT = Limiter(int(env("PATCHVANE_DISCOVER_RATE", "20") or 20), 60)
+
+# Feedback goes out over somebody else's API or somebody else's mail server,
+# and a box that posts to either is a box that can be held down.  Low, and
+# per hour rather than per minute: nobody writes six considered reports in
+# an hour, and somebody who really has six has one to write about the five.
+FEEDBACK_LIMIT = Limiter(int(env("PATCHVANE_FEEDBACK_RATE", "6") or 6), 3600)
 
 
 # ------------------------------------------------------------------- policy
@@ -2072,6 +2079,12 @@ class Handler(BaseHTTPRequestHandler):
                                 "ready": ai_ready(me),
                                 "zones": providers.ZONES,
                                 "can_store_key": ALLOW_SECRET_FILE})
+        elif path == "/api/support":
+            # Which ways out work here, asked before the choice is put in
+            # front of anybody, so nobody picks a route that was never going
+            # to carry their message.
+            self.json_out(200, {"ok": True, "routes": feedback.routes(),
+                                "repo": feedback.REPO})
         elif path == "/api/ai/chats":
             self.json_out(200, {"ok": True, "chats": chat_list(me)})
         elif path == "/api/ai/chat":
@@ -2262,6 +2275,21 @@ class Handler(BaseHTTPRequestHandler):
             # models, not a failure of this server, and the page shows it in
             # the conversation where the question was asked.
             self.json_out(200, out)
+        elif path == "/api/support/feedback":
+            if not FEEDBACK_LIMIT.allow(self.client_ip()):
+                self.json_out(429, {"ok": False, "error":
+                                    "That is a lot of reports from here. "
+                                    "Give it a while."})
+                return
+            form = self.body()
+            out = feedback.deliver((form.get("text") or ""),
+                                   (form.get("route") or "").strip(),
+                                   who=me, log=log)
+            log("feedback from %s: %s"
+                % (quiet_addr(me),
+                   "%s via %s" % ("sent", out.get("route")) if out.get("ok")
+                   else "not sent (%s)" % out.get("error")))
+            self.json_out(200 if out.get("ok") else 400, out)
         elif path == "/api/ai/chat":
             form = self.body()
             entry = chat_put(me, (form.get("id") or "").strip()[:32],

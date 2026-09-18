@@ -20,6 +20,9 @@ const S = {
   chatId: "",
   chats: [],
   histOpen: false,
+  /* The Support tab: what was searched for, what is open, and what is being
+     written. */
+  support: {},
 };
 
 /* ------------------------------------------------------------- constants */
@@ -1082,6 +1085,7 @@ function viewSettings() {
     ["general", "General", setGeneral],
     ["ai", "Assistant", setAI],
     ["sources", "Data sources", setSources],
+    ["support", "Support", setSupport],
   ]);
 }
 
@@ -1187,6 +1191,213 @@ function setGeneral() {
       </div>
     </div></div>
   </div>`;
+}
+
+/* --------------------------------------------------------------- support
+
+   Two things, and they are two things on purpose. Most of what brings
+   somebody here is a question that already has an answer, so the answers
+   come first and are searchable; sending a message is underneath, for when
+   they do not. A support page that leads with a contact form asks everybody
+   to describe their problem to a person before letting them find out it was
+   answered years ago.
+
+   Where a message goes is asked after it is written, never before. Being
+   made to classify something before describing it is how feature requests
+   end up filed as bugs: whoever is typing does not yet know which they are
+   writing, and asking first makes them think about the form instead of the
+   problem. */
+
+function setSupport() {
+  loadSupport();
+  const s = S.support || {};
+  const found = s.q ? helpSearch(s.q) : [];
+  const shown = s.q ? found : HELP;
+
+  return `<div class="panel wide" data-reveal>
+    <header><h2>Help</h2>
+      <span class="sub">${s.q
+        ? found.length
+          ? plural(found.length, "answer") + " for \u201c" + esc(s.q) + "\u201d"
+          : "nothing matched \u201c" + esc(s.q) + "\u201d"
+        : plural(HELP.length, "answer") + ", or search them"}</span></header>
+    <div class="body">
+      <div class="findrow" style="margin-bottom:16px">
+        <div class="findbox">
+          <input type="search" id="helpq" value="${esc(s.q || "")}"
+                 placeholder="What is not working? A word or two is enough"
+                 spellcheck="false" autocomplete="off"
+                 ${actv("input", helpTyped)}>
+        </div>
+        ${s.q ? `<button class="btn" ${act(helpTyped, "")}>Clear</button>` : ""}
+      </div>
+
+      ${s.q && !found.length ? `<div class="empty">
+        <h3>Nothing here matches that</h3>
+        <p>Try a different word, or write it out below and it will reach
+        somebody.</p></div>` : helpList(shown, s)}
+    </div>
+  </div>
+
+  ${feedbackPanel()}`;
+}
+
+/* Grouped when the whole list is showing, flat when it is a search result:
+   ranked answers put back into topic order are no longer ranked. */
+function helpList(items, s) {
+  const open = s.open || "";
+  const one = (h) => `<div class="qa ${open === h.id ? "on" : ""}">
+    <button class="qhead" ${act(helpOpen, h.id)}>
+      <span class="caret">\u25BE</span>
+      <strong>${esc(h.q)}</strong>
+      <span class="spacer"></span>
+      <span class="qtopic">${esc(h.topic)}</span>
+    </button>
+    ${open === h.id ? `<div class="qbody">${md(h.a)}</div>` : ""}
+  </div>`;
+
+  if (s.q) return `<div class="qalist">${items.map(one).join("")}</div>`;
+
+  const topics = [];
+  for (const h of items) {
+    const last = topics[topics.length - 1];
+    if (last && last.name === h.topic) last.items.push(h);
+    else topics.push({ name: h.topic, items: [h] });
+  }
+  return topics.map((t) => `<div class="qagroup">
+    <h3 class="qagtitle">${esc(t.name)}</h3>
+    <div class="qalist">${t.items.map(one).join("")}</div>
+  </div>`).join("");
+}
+
+function helpTyped(value) {
+  S.support = Object.assign({}, S.support, { q: value, open: "" });
+  /* One answer for one search is a click nobody should have to make. */
+  const hits = value ? helpSearch(value) : [];
+  if (hits.length === 1) S.support.open = hits[0].id;
+  render();
+  const box = $("helpq");
+  if (box && document.activeElement !== box) return;
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+function helpOpen(id) {
+  S.support = Object.assign({}, S.support,
+                            { open: (S.support || {}).open === id ? "" : id });
+  render();
+}
+
+function feedbackPanel() {
+  const s = S.support || {};
+  const routes = s.routes || {};
+  const text = (s.text || "").trim();
+  const nowhere = !routes.issue && !routes.mail;
+
+  return `<div class="panel wide" data-reveal>
+    <header><h2>Tell us something</h2>
+      <span class="sub">a bug, or anything else</span></header>
+    <div class="body">
+      ${s.sent ? `<div class="sentnote">
+        <strong>Thank you \u2014 that went through.</strong>
+        <p>${esc(s.sent.note || (s.sent.route === "issue"
+          ? "It is in the issue tracker."
+          : "It is in the maintainer's mail."))}</p>
+        ${s.sent.link ? `<a class="btn sm" href="${esc(s.sent.link)}"
+          target="_blank" rel="noreferrer">See the issue \u2197</a>` : ""}
+        <button class="btn ghost sm" ${act(feedbackAgain)}>Write another</button>
+      </div>` : `
+      <p class="hint" style="margin-top:0">Write it however you would say it.
+      Where it should go is the next question, not this one.</p>
+      <div class="field">
+        <textarea id="fbtext" rows="5" ${actv("input", feedbackTyped)}
+          placeholder="What happened, or what would be better?"
+          ${nowhere ? "disabled" : ""}>${esc(s.text || "")}</textarea>
+      </div>
+      ${nowhere ? `<p class="testline bad">This deployment has no issue
+        tracker and no way to send mail configured, so there is nowhere for
+        this to go. Whoever runs it can set one up.</p>` : `
+      <div class="route ${text.length >= 10 ? "on" : ""}">
+        <p class="routeq">${text.length >= 10
+          ? "Where should it go?"
+          : "Write a line or two and this will ask where to send it."}</p>
+        <div class="routebtns">
+          <button class="btn primary" ${act(sendFeedback, "issue")}
+            ${text.length < 10 || !routes.issue || s.busy ? "disabled" : ""}>
+            <strong>It is a bug</strong>
+            <span>${routes.issue
+              ? "opens an issue in " + esc(s.repo || "the tracker")
+                + ", which is public"
+              : "no issue tracker is configured here"}</span></button>
+          <button class="btn" ${act(sendFeedback, "mail")}
+            ${text.length < 10 || !routes.mail || s.busy ? "disabled" : ""}>
+            <strong>Everything else</strong>
+            <span>${routes.mail
+              ? "goes to whoever runs this, privately"
+              : "no mail is configured here"}</span></button>
+        </div>
+        ${s.busy ? `<p class="hint"><span class="spin"></span> Sending\u2026</p>` : ""}
+        ${s.error ? `<p class="testline bad">${esc(s.error)}</p>` : ""}
+        <p class="hint">Your address goes with it either way, so somebody can
+        come back to you. On a bug that means it is visible in the issue.</p>
+      </div>`}`}
+    </div>
+  </div>`;
+}
+
+function feedbackTyped(value) {
+  const was = ((S.support || {}).text || "").trim().length >= 10;
+  const now = (value || "").trim().length >= 10;
+  S.support = Object.assign({}, S.support, { text: value, error: "" });
+  /* Only redraw when the answer to "can this be sent yet" changes.  On every
+     keystroke it would rebuild the box being typed into. */
+  if (was === now) return;
+  render();
+  const box = $("fbtext");
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+function feedbackAgain() {
+  S.support = Object.assign({}, S.support, { sent: null, text: "", error: "" });
+  render();
+}
+
+async function sendFeedback(route) {
+  const s = S.support || {};
+  const text = (s.text || "").trim();
+  if (text.length < 10) return;
+  S.support = Object.assign({}, s, { busy: true, error: "" });
+  render();
+  try {
+    const r = await post("/api/support/feedback", { text, route });
+    const body = await r.json();
+    S.support = Object.assign({}, S.support, { busy: false });
+    if (!body.ok) {
+      S.support.error = body.error || "That did not go through.";
+    } else {
+      S.support.sent = body;
+      S.support.text = "";
+    }
+  } catch (e) {
+    S.support = Object.assign({}, S.support, { busy: false,
+      error: "Could not reach the dashboard." });
+  }
+  render();
+}
+
+/* Which ways out this deployment actually has, asked once when the tab is
+   first opened rather than offered and then found not to work. */
+async function loadSupport() {
+  /* Marked as asked before it is asked, so a deployment where this fails
+     does not refetch on every keystroke in the search box. */
+  if ((S.support || {}).asked) return;
+  S.support = Object.assign({}, S.support, { asked: true });
+  try {
+    const r = await fetch("/api/support", { cache: "no-store" });
+    const body = await r.json();
+    S.support = Object.assign({}, S.support,
+                              { routes: body.routes || {}, repo: body.repo });
+    render();
+  } catch (e) { /* the help still works */ }
 }
 
 const ZONE_NAME = {
@@ -2168,20 +2379,31 @@ function md(text) {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
   const close = () => { if (list) { out += `</${list}>`; list = null; } };
+  /* Wrapped lines are one paragraph, which is how anybody writing prose
+     expects them to read.  Taking each line as its own paragraph turns a
+     wrapped answer into a column of one-line paragraphs with gaps between
+     them, and both the model and the help text here wrap. */
+  let para = [];
+  const flush = () => {
+    if (para.length) { out += `<p>${inline(para.join(" "))}</p>`; para = []; }
+  };
+  const stop = () => { flush(); close(); };
   for (const raw of lines) {
     const l = raw.trim();
-    if (!l) { close(); continue; }
+    if (!l) { stop(); continue; }
     let m;
-    if ((m = /^#{1,4}\s+(.*)$/.exec(l))) { close(); out += `<h4>${inline(m[1])}</h4>`; }
+    if ((m = /^#{1,4}\s+(.*)$/.exec(l))) { stop(); out += `<h4>${inline(m[1])}</h4>`; }
     else if ((m = /^[-*]\s+(.*)$/.exec(l))) {
+      flush();
       if (list !== "ul") { close(); out += "<ul>"; list = "ul"; }
       out += `<li>${inline(m[1])}</li>`;
     } else if ((m = /^\d+[.)]\s+(.*)$/.exec(l))) {
+      flush();
       if (list !== "ol") { close(); out += "<ol>"; list = "ol"; }
       out += `<li>${inline(m[1])}</li>`;
-    } else { close(); out += `<p>${inline(l)}</p>`; }
+    } else { close(); para.push(l); }
   }
-  close();
+  stop();
   return out;
 }
 

@@ -620,10 +620,12 @@ dl.kv dt:last-of-type, dl.kv dd:last-of-type { border-bottom: 0; }
 .field { margin-top: 14px; }
 .field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-2);
   margin-bottom: 5px; }
-.field input, .field select { width: 100%; max-width: none; padding: 9px 12px;
-  border: 1px solid var(--line); border-radius: var(--r-sm);
+.field input, .field select, .field textarea { width: 100%; max-width: none;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--bg-2); color: var(--ink); font: inherit; font-size: 13px; }
-.field input:focus { outline: none; border-color: var(--blue); box-shadow: var(--glow); }
+.field textarea { resize: vertical; min-height: 88px; line-height: 1.6; }
+.field input:focus, .field textarea:focus { outline: none;
+  border-color: var(--blue); box-shadow: var(--glow); }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 11px;
   font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
 
@@ -1614,9 +1616,57 @@ body.firstrun nav .navitem.ready { opacity: 1; pointer-events: auto; }
 /* A name that belongs to more than one person. */
 .whichone { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
   margin-top: 14px; }
-.whichone .btn { flex-direction: column; align-items: flex-start; gap: 1px;
-  height: auto; padding: 8px 12px; }
+.whichone .btn { display: flex; flex-direction: column; align-items: flex-start;
+  gap: 1px; height: auto; padding: 8px 12px; }
 .whichone .btn span { font-size: 11px; color: var(--ink-3); font-weight: 400; }
+
+/* ------------------------------------------------------------- support */
+
+.qagroup + .qagroup { margin-top: 20px; }
+.qagtitle { margin: 0 0 7px; font-size: 11px; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
+.qalist { border: 1px solid var(--line); border-radius: var(--r);
+  overflow: hidden; }
+.qa + .qa { border-top: 1px solid var(--line); }
+.qa.on { background: var(--panel-2); }
+.qhead { display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 11px 14px; background: none; border: 0; cursor: pointer;
+  font: inherit; text-align: left; color: var(--ink); }
+.qhead:hover { background: var(--panel-2); }
+.qhead strong { font-size: 13px; font-weight: 550; }
+.qhead .caret { font-size: 10px; color: var(--ink-3);
+  transition: transform var(--t-fast) var(--ease); }
+.qa.on .caret { transform: rotate(180deg); }
+.qtopic { flex: none; font-size: 10.5px; color: var(--ink-3); }
+.qbody { padding: 0 14px 14px 32px; font-size: 13px; line-height: 1.68;
+  color: var(--ink-2); animation: stepin var(--t-fast) var(--ease); }
+.qbody p { margin: 0 0 9px; }
+.qbody p:last-child { margin-bottom: 0; }
+.qbody code { font-size: 12px; }
+
+/* Where it should go, which only becomes a question once there is something
+   to send: greyed and explained until then, rather than two live buttons
+   that quietly do nothing. */
+.route { margin-top: 4px; opacity: .55; transition: opacity var(--t) var(--ease); }
+.route.on { opacity: 1; }
+.routeq { margin: 0 0 9px; font-size: 12.5px; font-weight: 550;
+  color: var(--ink-2); }
+.routebtns { display: flex; flex-wrap: wrap; gap: 10px; }
+/* .btn is an ordinary inline-block, so the column has to be asked for here
+   or the label and the explanation run together on one line. */
+.routebtns .btn { display: flex; flex-direction: column; align-items: flex-start;
+  flex: 1; min-width: 230px; height: auto; padding: 11px 14px; gap: 2px;
+  text-align: left; }
+.routebtns .btn strong { font-size: 13px; font-weight: 600; }
+.routebtns .btn span { font-size: 11.5px; font-weight: 400; opacity: .85;
+  white-space: normal; }
+
+.sentnote { padding: 15px 16px; border-radius: var(--r);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, var(--line));
+  background: color-mix(in srgb, var(--green) 9%, transparent); }
+.sentnote strong { font-size: 13.5px; }
+.sentnote p { margin: 5px 0 12px; font-size: 12.5px; color: var(--ink-2); }
+.sentnote .btn { margin-right: 8px; }
 
 /* The files one commit touched. */
 .filelist { list-style: none; margin: 0; padding: 0; }
