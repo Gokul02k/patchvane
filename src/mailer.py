@@ -530,6 +530,75 @@ def send_welcome(to: str, username: str, first: str = "", last: str = "",
     return send(to, subject, shell(subject, inner), text, name=first, log=log)
 
 
+def send_merged(to: str, landed: list, first: str = "", gender: str = "",
+                log=None) -> tuple:
+    """A patch of theirs reached Linus' tree.
+
+    The one message this sends that nobody has to act on, which is the whole
+    point of it: getting a patch into mainline is weeks of waiting after the
+    last thing anybody said about it, and the commit appears with no
+    announcement at all.  So it carries the facts somebody would go and look
+    up -- the subject, the commit, when it landed -- rather than only telling
+    them to go and look.
+
+    `landed` is the whole batch.  A collection that catches up on a merge
+    window can find a dozen at once, and a dozen separate messages about the
+    same good news reads as a malfunction."""
+    if not landed:
+        return False, "nothing landed"
+    many = len(landed) > 1
+    rows = "".join("""
+      <tr><td style="padding:13px 16px;border-top:1px solid %(line)s;">
+        <div style="font:600 14px/1.45 %(font)s;">%(subject)s</div>
+        <div style="margin-top:5px;font:400 12px/1.5 %(font)s;color:%(faint)s;">
+          <span style="font-family:ui-monospace,Menlo,Consolas,monospace;">%(short)s</span>%(when)s%(rel)s
+        </div>
+      </td></tr>""" % dict(
+        subject=esc(c.get("subject") or "(no subject)"),
+        short=esc(c.get("short") or (c.get("commit") or "")[:12]),
+        when=" &middot; " + esc(str(c.get("date"))[:10]) if c.get("date") else "",
+        rel=" &middot; " + esc(c["release"]) if c.get("release") else "",
+        font=FONT, faint=FAINT, line=LINE) for c in landed)
+
+    inner = """
+      <p style="margin:0 0 8px;font:600 17px/1.35 %(font)s;">%(greet)s
+      congratulations.</p>
+      <p style="margin:0 0 18px;color:%(faint)s;">%(lead)s</p>
+      <table role="presentation" width="100%%" cellpadding="0" cellspacing="0"
+             style="border:1px solid %(line)s;border-radius:11px;">%(rows)s</table>
+      %(cta)s
+      <p style="margin:22px 0 0;color:%(faint)s;">This is the only kind of
+      message Patchvane sends about your patches, and it is off until you
+      turn it on. Settings &rarr; General has the switch.</p>
+    """ % dict(
+        greet=esc(greet(first, gender)), font=FONT, faint=FAINT, line=LINE,
+        lead=("%d of your patches have reached Linus' tree." % len(landed)
+              if many else "A patch of yours has reached Linus' tree."),
+        rows=rows,
+        cta=button("See it on your dashboard", SITE) if SITE else "")
+
+    plain = "\n".join(
+        "  %s\n    %s%s%s" % (
+            c.get("subject") or "(no subject)",
+            c.get("short") or (c.get("commit") or "")[:12],
+            "  " + str(c.get("date"))[:10] if c.get("date") else "",
+            "  " + c["release"] if c.get("release") else "")
+        for c in landed)
+    text = ("%s congratulations.\n\n%s\n\n%s\n%s\n"
+            "This is the only kind of message Patchvane sends about your "
+            "patches, and it is off until you turn it on. Settings > General "
+            "has the switch.\n"
+            % (greet(first, gender),
+               ("%d of your patches have reached Linus' tree."
+                % len(landed)) if many else
+               "A patch of yours has reached Linus' tree.",
+               plain, ("\n  " + SITE + "\n") if SITE else ""))
+    subject = ("%d of your patches are in mainline" % len(landed) if many
+               else "Your patch is in mainline: %s"
+                    % (landed[0].get("subject") or "")[:70])
+    return send(to, subject, shell(subject, inner), text, name=first, log=log)
+
+
 def send_password_changed(to: str, username: str, first: str = "",
                           gender: str = "", log=None) -> tuple:
     """Somebody changed it.  If that somebody was not them, this is the only

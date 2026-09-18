@@ -1139,6 +1139,34 @@ function setGeneral() {
       unusual.</p>
     </div></div>
 
+    <div class="panel" data-reveal><header><h2>When a patch lands</h2></header>
+    <div class="body">
+      <p class="hint" style="margin-top:0">A patch reaching Linus' tree is the
+      end of the whole thing, and the one part of it nobody announces: the
+      maintainer said "applied" weeks ago, and then one day the commit is
+      simply there. This is the only message Patchvane will send you about
+      your own patches.</p>
+      <div class="switchrow">
+        <label class="switch"><input type="checkbox" ${st.merged_mail ? "checked" : ""}
+          ${actv("change", setMergedMail)}><span></span></label>
+        <div><strong>${st.merged_mail ? "On" : "Off"}</strong>
+          <div class="sub2">${st.merged_mail
+            ? "you will hear from us when one reaches mainline, and not "
+              + "otherwise"
+            : "nothing is sent"}</div></div>
+      </div>
+      <p class="hint">It goes to <strong>${esc(st.who || "your address")}</strong>
+      after a collection finds a commit of yours in mainline that was not
+      there last time, with the subject, the commit and when it landed.
+      Switching it on now does not mean hearing about everything that has
+      already landed: what has been seen is remembered either way, so you get
+      the next one, not the back catalogue.</p>
+      ${st.mail === false ? `<p class="testline bad">This server has no way to
+        send mail configured, so nothing can go out even with this on.</p>` : ""}
+    </div></div>
+  </div>
+
+  <div class="row2" style="align-items:start">
     <div class="panel" data-reveal><header><h2>This server</h2></header><div class="body">
       <dl class="kv">
         <dt>Running as</dt><dd>${esc(st.mode || "local")}</dd>
@@ -3161,6 +3189,23 @@ async function setAuto(on) {
   const body = await pushAuto(on, S.status.interval || 15);
   toast(on ? `Refreshing every ${prettyInterval(body.interval)}.`
            : "Automatic refresh is off.");
+}
+
+/* The one thing this dashboard will send unasked, so it is off until it is
+   asked for and says plainly what turning it on means. */
+async function setMergedMail(on) {
+  try {
+    const r = await post("/api/prefs", { merged_mail: !!on });
+    const body = await r.json();
+    if (!body.ok) { toast(body.error || "Could not save that.", "bad"); return; }
+    S.status.merged_mail = !!(body.prefs && body.prefs.merged_mail);
+    toast(S.status.merged_mail
+      ? "We will write when a patch of yours reaches mainline."
+      : "No more mail about patches landing.");
+    render();
+  } catch (e) {
+    toast("Could not reach the dashboard.", "bad");
+  }
 }
 
 async function setInterval_(minutes) {

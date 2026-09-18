@@ -660,6 +660,16 @@ def run_collect(email: str, full: bool = False, why: str = "manual") -> tuple:
         state["last_error"] = ""
         state["last_summary"] = summary
         log("collected for %s: %s" % (quiet_addr(email), summary))
+        # After the data is written and before anybody is told the run
+        # finished, so the dashboard and the message cannot disagree.  It
+        # must never be able to fail the collection that produced it: the
+        # patches are collected either way and a mail provider having a bad
+        # afternoon is not a reason to report a failed run.
+        try:
+            tell_about_merges(email)
+        except Exception as exc:
+            log("could not check what merged for %s: %s"
+                % (quiet_addr(email), exc))
         return True, summary
     except subprocess.TimeoutExpired:
         state["last_error"] = "timed out"
@@ -673,6 +683,79 @@ def run_collect(email: str, full: bool = False, why: str = "manual") -> tuple:
         # file left behind would leave a bar on screen for ever.
         clear_progress(email)
         COLLECT_LOCK.release()
+
+
+# ------------------------------------------------- word when one lands
+
+# A patch reaching mainline is the end of the whole process and the only
+# part of it that happens with no message on any list: the maintainer said
+# "applied" weeks ago, and then one day the commit is simply in Linus' tree.
+# This is the one thing this server will write to somebody unprompted, and
+# it stays off until they ask for it.
+
+
+def told_path(email: str) -> str:
+    return os.path.join(home_of(email), "told.json")
+
+
+def told_of(email: str) -> set:
+    try:
+        with open(told_path(email), encoding="utf-8") as fh:
+            return set(json.load(fh).get("merged") or [])
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
+def told_save(email: str, ids: set) -> bool:
+    try:
+        os.makedirs(home_of(email), exist_ok=True)
+        tmp = told_path(email) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"merged": sorted(ids)}, fh)
+        os.replace(tmp, told_path(email))
+        return True
+    except OSError:
+        return False
+
+
+def tell_about_merges(email: str) -> int:
+    """Mail about anything that reached mainline since the last look.
+
+    The record of what has been mentioned is kept whether or not they want
+    the mail, and that is the important part.  Somebody switching this on
+    after a year of using the dashboard wants to hear about the next patch
+    that lands, not about all four hundred that already have -- and the same
+    goes for the first collection, which finds a whole career at once.  So
+    the list is always brought up to date; the only thing the setting
+    decides is whether a message goes out on the way."""
+    data = load_data(email)
+    landed = [m for m in (data.get("merged") or []) if m.get("mainline")]
+    have = {str(m.get("commit") or "") for m in landed if m.get("commit")}
+    if not have:
+        return 0
+
+    seen = told_of(email)
+    first_ever = not os.path.exists(told_path(email))
+    fresh = [m for m in landed if str(m.get("commit")) not in seen]
+    told_save(email, seen | have)
+    if first_ever or not fresh:
+        return 0
+
+    rec = accounts.by_email(email) or {}
+    if not prefs_of(email).get("merged_mail"):
+        return 0
+    if not mailer.ready():
+        log("would have said %d merged for %s, but no mail is configured"
+            % (len(fresh), quiet_addr(email)))
+        return 0
+
+    # Newest last, so a batch reads in the order they happened.
+    fresh.sort(key=lambda m: str(m.get("date") or ""))
+    sent, why = mailer.send_merged(email, fresh, first=rec.get("first", ""),
+                                   gender=rec.get("gender", ""), log=log)
+    log("merged mail to %s: %s (%d commit(s))"
+        % (quiet_addr(email), "sent" if sent else why, len(fresh)))
+    return len(fresh) if sent else 0
 
 
 def start_first_collection(email: str, why: str = "first sign-in") -> None:
@@ -911,7 +994,12 @@ def ai_models(email: str = "") -> dict:
 # have not changed it.  These live in the vault with their keys rather than
 # in the browser, so that signing in from a second machine finds the same
 # dashboard rather than the defaults again.
-PREF_DEFAULTS = {"auto": None, "interval": None, "theme": ""}
+PREF_DEFAULTS = {"auto": None, "interval": None, "theme": "",
+                 # Off, and not None: the others fall back to what the
+                 # deployment was started with, and there is no deployment
+                 # default for writing to somebody unasked.  Nobody gets mail
+                 # they did not switch on.
+                 "merged_mail": False}
 
 
 def prefs_of(email: str) -> dict:
@@ -1904,6 +1992,10 @@ class Handler(BaseHTTPRequestHandler):
                 "interval": mine["interval"],
                 "next_run": next_run_for(me),
                 "theme": mine["theme"],
+                "merged_mail": bool(mine["merged_mail"]),
+                # Whether anything could be sent at all, so the switch can
+                # say up front that this server has no way to send it.
+                "mail": mailer.ready(),
                 "last_run": run["last_run"],
                 "last_error": bool(run["last_error"]),
                 "generated": d.get("generated"),
@@ -2071,6 +2163,8 @@ class Handler(BaseHTTPRequestHandler):
             theme = (form.get("theme") or "").strip().lower()
             if theme in ("dark", "light"):
                 patch["theme"] = theme
+            if form.get("merged_mail") is not None:
+                patch["merged_mail"] = bool(form["merged_mail"])
             if not patch:
                 self.json_out(400, {"ok": False, "error": "nothing to set"})
                 return
