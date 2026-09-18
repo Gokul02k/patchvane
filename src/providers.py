@@ -10,7 +10,9 @@ question, and a key, and returns an answer or a reason there is not one.
 """
 
 import json
+import math
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -287,6 +289,144 @@ class Provider:
             return [n for n in names if n and self._answers_questions(n)]
         except Exception:
             return []
+
+
+# ---------------------------------------------------------------- ranking
+
+# Which of the models a key turns out to reach is the one to start somebody
+# on.  None of these APIs has a field for "this is the capable one", and the
+# order they list models in is arbitrary, so the only thing left to read is
+# the name -- which is guesswork, and is exactly why what this produces is a
+# default rather than a decision.  The list it was picked from is put in
+# front of the person next to it.
+#
+# It works well enough because the vocabulary is small and shared.  Within
+# one provider the naming is consistent, and across providers the same dozen
+# words have settled on the same meanings: opus and ultra and pro are the big
+# ones, mini and lite and nano are the cheap ones.
+#
+# Every group that matches is added up rather than the first one winning, so
+# a name carrying two of these words is read as both: gemini-3-flash-lite is
+# a flash that is also a lite, and ranks below a plain flash.
+#
+# These are matched against the words of a name and never against the name as
+# a run of characters, which is not a detail: "gemini" ends in "mini", and
+# read the wrong way every Gemini model there is gets scored as a cheap one.
+TIERS = (
+    (("opus", "ultra", "titan", "max"), 60),
+    (("pro", "large", "xl", "405b"), 45),
+    (("sonnet", "medium", "70b", "72b"), 30),
+    # Weak on purpose: turbo named the big one in gpt-4-turbo and the cheap
+    # one in gpt-3.5-turbo, so it should never outweigh a generation.
+    (("plus", "turbo", "chat", "standard"), 4),
+    (("flash", "fast", "air", "flex"), 8),
+    (("haiku", "mini", "small", "lite", "nano", "tiny", "instant", "micro",
+      "scout", "8b", "7b", "4b", "3b", "1b"), -45),
+)
+
+# Not about how capable it is, but about whether it is the one to put
+# somebody on without asking them first.
+NOTES = (
+    (("deprecated", "legacy", "old"), -200),
+    (("preview", "experimental", "exp", "alpha", "beta", "rc"), -12),
+    (("thinking", "reasoning", "reasoner", "think"), 6),
+    (("latest",), 4),
+)
+
+# A number with b after it is a parameter count; anything of three digits or
+# more is a date stamp.  Neither is a version, and both sit in names next to
+# one that is.
+_SIZE = re.compile(r"^(\d+(?:\.\d+)?)b$")
+# A version is one or two digits, optionally a minor part, optionally one
+# trailing letter -- gpt-4o has one.  Not x, which is the mixture notation in
+# mixtral-8x7b and would otherwise read as a version 8, and not b, which is
+# the parameter count above.
+_NUM = re.compile(r"^v?(\d{1,2})(?:\.(\d{1,3}))?([ac-wyz])?$")
+_ONUM = re.compile(r"^o(\d{1,2})$")           # o3, o4
+
+
+def words_of(name):
+    """A model name as the words in it.
+
+    Providers separate them with dashes, dots, slashes and underscores, and
+    no two agree, so all of it is one separator here."""
+    return [w for w in re.split(r"[^a-z0-9.]+", name.lower()) if w]
+
+
+def version_of(name):
+    """The version in a model name, as one number that sorts correctly.
+
+    Names carry it half a dozen ways -- gpt-5.6, claude-opus-4-5, gemini-3.8,
+    o3 -- and two small numbers in a row almost always mean a major and a
+    minor rather than two separate facts, which is why claude-opus-4-5 is one
+    version and not a four and a five.
+
+    What comes back is not the version anybody would write down: the minor
+    part is scaled so that 5.10 sorts above 5.6 rather than below it, the way
+    a plain decimal would have it.  It is only ever compared with another one
+    of these."""
+    words = words_of(name)
+    for i, word in enumerate(words):
+        if _SIZE.match(word):
+            continue
+        found = _NUM.match(word) or _ONUM.match(word)
+        if not found:
+            continue
+        major = int(found.group(1))
+        minor = found.lastindex >= 2 and found.group(2)
+        if not minor and i + 1 < len(words):
+            # claude-opus-4-5: the next word is the minor part, so long as it
+            # is a bare small number and not the start of something else.
+            nxt = _NUM.match(words[i + 1])
+            if nxt and not nxt.group(2) and not nxt.group(3) \
+                    and not _SIZE.match(words[i + 1]):
+                minor = nxt.group(1)
+        return major + int(minor or 0) / 100.0
+    return 0.0
+
+
+def billions(name):
+    """The parameter count a name advertises, when it advertises one."""
+    for word in words_of(name):
+        found = _SIZE.match(word)
+        if found:
+            try:
+                return float(found.group(1))
+            except ValueError:
+                return 0.0
+    return 0.0
+
+
+def score(name):
+    """How much somebody would rather have this one answering, read off the
+    name.  Only ever meaningful next to another one of these."""
+    said = set(words_of(name))
+    points = 0.0
+    for words, worth in TIERS + NOTES:
+        if said.intersection(words):
+            points += worth
+    # A newer generation beats an older one of the same tier, and by enough
+    # to matter: this year's middle model usually answers better than last
+    # year's flagship, and every provider keeps both on the list.
+    points += version_of(name) * 8
+    # Parameter counts run from 1 to 600 and are not worth five hundred times
+    # as much at the top, so they are flattened before they are counted.
+    size = billions(name)
+    if size:
+        points += min(math.log10(size + 1) * 11, 26)
+    return points
+
+
+def rank(names):
+    """Those models, the one to reach for first.  Ties break on the name so
+    that the same key always produces the same order."""
+    return sorted(names, key=lambda n: (-score(n), n))
+
+
+def best(names, fallback=""):
+    """The one to start somebody on out of what their key reaches."""
+    usable = rank([n for n in names if n and Provider._answers_questions(n)])
+    return usable[0] if usable else fallback
 
 
 # Everything below is reachable with an API key and nothing else.  good_at is

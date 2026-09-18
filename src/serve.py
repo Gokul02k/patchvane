@@ -992,15 +992,25 @@ def ai_catalogue(email: str = "", keys=None) -> list:
     mine = vault_of(email)
     stored = set((mine.get("keys") or {}).keys())
     session = RUNTIME_KEY.get(email) or {}
-    picked = ai_models(email)
+    # Kept apart rather than merged, because the two mean different things on
+    # screen.  One this person's key was asked about is a fact; one the
+    # deployment pinned in its config is somebody's deliberate choice and
+    # worth saying so; and neither is the same as nothing being known.
+    theirs = dict(mine.get("models") or {})
+    pinned = dict((CONFIG.get("ai") or {}).get("models") or {})
     out = []
     for pid in providers.ORDER:
         p = providers.PROVIDERS[pid]
         out.append({
             "id": pid, "label": p.label, "where": p.where,
             "endpoint": p.base,
-            "model": picked.get(pid) or p.default,
-            "default": p.default,
+            # Empty until a key has been asked what it reaches.  A name shown
+            # before then is this file's opinion from whenever it was last
+            # edited, and putting one on screen next to "no key" states as
+            # fact something nobody has checked.
+            "model": theirs.get(pid) or pinned.get(pid) or "",
+            "pinned": bool(pinned.get(pid) and not theirs.get(pid)),
+            "fallback": p.default,
             "good_at": sorted(p.good_at),
             "ready": bool(keys.get(pid)),
             "source": ("this session" if session.get(pid)
@@ -1324,6 +1334,162 @@ def ai_model_list(pid: str, email: str = "") -> tuple:
     return True, names, ""
 
 
+# ------------------------------------------------- the assistant's memory
+
+# Conversations with the assistant, one file per person.
+#
+# They sit beside that person's collected patches rather than in the vault.
+# The vault is rewritten whenever a key or a setting changes and is meant to
+# stay small and cheap to read; a year of conversations is neither.  What is
+# in here is the same kind of thing as data.json -- one person's own
+# dashboard, in their own directory -- and no key, no password and nothing
+# belonging to anybody else ever goes into it.
+#
+# Every limit here exists because nothing else bounds this file: a
+# conversation is appended to on every answer, and an assistant that quietly
+# grew a hundred megabytes in somebody's home directory would be a bug
+# reported as "the dashboard got slow".
+CHAT_KEEP = 40          # conversations kept for one person, newest first
+CHAT_TURNS = 120        # turns kept within one conversation
+CHAT_CHARS = 24000      # characters kept in a single turn
+
+
+def chats_path(email: str) -> str:
+    return os.path.join(home_of(email), "chats.json")
+
+
+def chats_of(email: str) -> list:
+    """Everything this person has asked, newest first."""
+    if not email:
+        return []
+    try:
+        with open(chats_path(email), encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    talks = blob.get("chats") if isinstance(blob, dict) else blob
+    return talks if isinstance(talks, list) else []
+
+
+def chats_save(email: str, talks: list) -> bool:
+    home = home_of(email)
+    try:
+        os.makedirs(home, exist_ok=True)
+        tmp = chats_path(email) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"chats": talks[:CHAT_KEEP]}, fh)
+        os.replace(tmp, chats_path(email))
+        return True
+    except OSError:
+        return False
+
+
+def chat_title(turns: list) -> str:
+    """What to call a conversation in a list of them.
+
+    The first thing they asked, which is what anybody looking for it again
+    will remember.  Not the model's answer: every answer opens with much the
+    same sentence, and a list of those tells you nothing."""
+    for t in turns:
+        if t.get("role") == "user" and (t.get("text") or "").strip():
+            said = " ".join(t["text"].split())
+            return said[:70] + ("\u2026" if len(said) > 70 else "")
+    return "Untitled"
+
+
+def clean_turns(turns: list) -> list:
+    """Only the shape this stores, whatever the page sent."""
+    out = []
+    for t in turns if isinstance(turns, list) else []:
+        if not isinstance(t, dict):
+            continue
+        role = "user" if t.get("role") == "user" else "bot"
+        text = str(t.get("text") or "")[:CHAT_CHARS]
+        if not text.strip():
+            continue
+        keep = {"role": role, "text": text}
+        for extra in ("provider", "model", "label"):
+            if t.get(extra):
+                keep[extra] = str(t[extra])[:80]
+        out.append(keep)
+    return out[-CHAT_TURNS:]
+
+
+def chat_put(email: str, cid: str, turns: list) -> dict:
+    """Write a conversation down, or update the one already there.
+
+    The page owns the conversation while it is happening and sends the whole
+    thing after each answer, rather than this side appending turn by turn.
+    That is one more round trip's worth of data and it buys the thing that
+    matters: a conversation on screen and a conversation on disk that cannot
+    drift apart, whichever of the two the browser lost."""
+    if not email:
+        return {}
+    kept = clean_turns(turns)
+    if not kept:
+        return {}
+    talks = [c for c in chats_of(email) if c.get("id") != cid]
+    now = accounts.now_iso()
+    was = next((c for c in chats_of(email) if c.get("id") == cid), {})
+    entry = {
+        "id": cid or secrets.token_hex(8),
+        "title": chat_title(kept),
+        "started": was.get("started") or now,
+        "updated": now,
+        "turns": kept,
+    }
+    talks.insert(0, entry)          # newest first, and this one just moved
+    chats_save(email, talks)
+    return entry
+
+
+def chat_drop(email: str, cid: str = "", every: bool = False) -> bool:
+    if not email:
+        return False
+    if every:
+        return chats_save(email, [])
+    return chats_save(email, [c for c in chats_of(email)
+                              if c.get("id") != cid])
+
+
+def chat_list(email: str) -> list:
+    """The conversations without their contents, for the panel that lists
+    them.  A hundred answers is most of a megabyte and none of it is on
+    screen until one is opened."""
+    return [{"id": c.get("id", ""), "title": c.get("title", ""),
+             "started": c.get("started", ""), "updated": c.get("updated", ""),
+             "turns": len(c.get("turns") or [])}
+            for c in chats_of(email)]
+
+
+def adopt_model(email: str, pid: str, key: str) -> dict:
+    """Ask a key what it can run, and start this person on the best of it.
+
+    A model name written into this file is out of date the week after it is
+    written: providers retire the old one the day the new one ships, and the
+    name that was a sensible default becomes a 404 with nobody to tell.  So
+    nothing is defaulted from here.  The moment a key arrives it is asked
+    what it actually reaches, and the choice is made out of that answer.
+
+    Every part of this can fail -- the key can be wrong, the service down, a
+    gateway can have no /models at all -- and none of it is worth refusing a
+    key over.  The key is already saved by the time this runs.  When it comes
+    back with nothing, the provider's own default stays in place as the guess
+    of last resort and the page says plainly that it is a guess."""
+    p = providers.PROVIDERS.get(pid)
+    if not p or not key:
+        return {"model": "", "models": [], "guessed": True}
+    try:
+        names = p.models(key, timeout=20)
+    except Exception:
+        names = []
+    if not names:
+        return {"model": p.default, "models": [], "guessed": True}
+    pick = providers.best(names, p.default)
+    save_ai_model(email, pid, pick)
+    return {"model": pick, "models": names, "guessed": False}
+
+
 def save_ai_model(email: str, pid: str, model: str) -> bool:
     """Remember which model this person wants from a provider.
 
@@ -1338,10 +1504,13 @@ def save_ai_model(email: str, pid: str, model: str) -> bool:
         return False
     blob = vault_of(email)
     picked = dict(blob.get("models") or {})
-    if model == p.default:
-        picked.pop(pid, None)       # back to the default, so stop overriding
-    else:
-        picked[pid] = model
+    # Recorded even when it matches the provider's own default.  It used to
+    # be dropped in that case, on the grounds that agreeing with the default
+    # is not an override -- but the default is now only a guess of last
+    # resort, and the difference between "this model was on the key when we
+    # looked" and "nobody has ever checked" is the difference the page is
+    # trying to show.
+    picked[pid] = model
     blob["models"] = picked
     return vault_save(email, blob)
 
@@ -1783,12 +1952,26 @@ class Handler(BaseHTTPRequestHandler):
                                 "ready": ai_ready(me),
                                 "zones": providers.ZONES,
                                 "can_store_key": ALLOW_SECRET_FILE})
+        elif path == "/api/ai/chats":
+            self.json_out(200, {"ok": True, "chats": chat_list(me)})
+        elif path == "/api/ai/chat":
+            want = (q.get("id") or [""])[0]
+            found = next((c for c in chats_of(me) if c.get("id") == want), None)
+            self.json_out(200 if found else 404,
+                          {"ok": bool(found), "chat": found or {},
+                           "error": "" if found else "That conversation is "
+                                                     "not here any more."})
         elif path == "/api/ai/models":
             pid = (q.get("provider") or [""])[0]
             ok, names, why = ai_model_list(pid, me)
             p = providers.PROVIDERS.get(pid)
-            self.json_out(200, {"ok": ok, "models": names, "provider": pid,
-                                "error": why,
+            self.json_out(200, {"ok": ok,
+                                # Best first, so the list opens on the one
+                                # somebody would have picked anyway rather
+                                # than on whatever the provider sorted by.
+                                "models": providers.rank(names) if ok else [],
+                                "provider": pid, "error": why,
+                                "best": providers.best(names) if ok else "",
                                 "spares": list(p.spares) if p else [],
                                 "current": (ai_models(me).get(pid) or
                                             (p.default if p else ""))})
@@ -1957,6 +2140,25 @@ class Handler(BaseHTTPRequestHandler):
             # models, not a failure of this server, and the page shows it in
             # the conversation where the question was asked.
             self.json_out(200, out)
+        elif path == "/api/ai/chat":
+            form = self.body()
+            entry = chat_put(me, (form.get("id") or "").strip()[:32],
+                             form.get("turns") or [])
+            if not entry:
+                self.json_out(400, {"ok": False,
+                                    "error": "nothing to remember"})
+                return
+            self.json_out(200, {"ok": True, "id": entry["id"],
+                                "title": entry["title"],
+                                "chats": chat_list(me)})
+        elif path == "/api/ai/chat/forget":
+            form = self.body()
+            every = bool(form.get("all"))
+            chat_drop(me, (form.get("id") or "").strip()[:32], every)
+            log("assistant %s for %s"
+                % ("history cleared" if every else "conversation removed",
+                   quiet_addr(me)))
+            self.json_out(200, {"ok": True, "chats": chat_list(me)})
         elif path == "/api/ai/key":
             form = self.body()
             pid = (form.get("provider") or "").strip()
@@ -1972,10 +2174,25 @@ class Handler(BaseHTTPRequestHandler):
                 RUNTIME_KEY.get(me, {}).pop(pid, None)
             log("assistant key for %s %s, for %s"
                 % (pid, "set" if key else "removed", quiet_addr(me)))
+            # One round trip, here, while they are still looking at the box
+            # they pasted into.  Doing it now is what lets the model be a
+            # fact about their key rather than a name out of this file, and
+            # it is the same request the settings page would otherwise make
+            # the moment it repainted.
+            chosen = adopt_model(me, pid, key) if key else {}
+            if chosen.get("model"):
+                log("assistant model for %s: %s%s, for %s"
+                    % (pid, chosen["model"],
+                       " (guessed, it would not list)" if chosen["guessed"]
+                       else " of %d it offered" % len(chosen["models"]),
+                       quiet_addr(me)))
             self.json_out(200, {"ok": True, "provider": pid,
                                 "ready": ai_ready(me),
                                 "providers": ai_catalogue(me),
                                 "stored": stored,
+                                "model": chosen.get("model", ""),
+                                "models": chosen.get("models", []),
+                                "guessed": chosen.get("guessed", False),
                                 "can_store_key": ALLOW_SECRET_FILE})
         elif path == "/api/ai/model":
             form = self.body()

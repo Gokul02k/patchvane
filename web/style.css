@@ -1061,10 +1061,45 @@ ul.tight li::before { content: "\2022"; position: absolute; left: 0;
 .pkmenu .more { border-top: 1px solid var(--line); margin-top: 5px;
   border-radius: 0 0 7px 7px; color: var(--blue); font-size: 12px; }
 
+/* Who answered, and a way to take the answer away with you.  One rule
+   across the bottom rather than one per item, so an answer with nothing to
+   say about its provider does not grow a second empty line. */
+.msgfoot { display: flex; align-items: flex-end; gap: 10px; margin-top: 9px;
+  padding-top: 8px; border-top: 1px solid var(--line); }
+.msgfoot .via { margin: 0; padding: 0; border: 0; }
+.msgfoot button.link { font-size: 11px; opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+.msg.bot:hover .msgfoot button.link,
+.msgfoot button.link:focus-visible { opacity: 1; }
+
 .via { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line);
   font-size: 11px; color: var(--ink-3); }
 .via .mono { font-size: 10.5px; opacity: .8; }
 .via .fell { color: var(--amber); cursor: help; margin-left: 4px; }
+
+/* Earlier conversations.  It drops in over the top of the one on screen
+   rather than replacing it, so closing the panel puts you back exactly
+   where you were without having to reload anything. */
+.aihist { border-bottom: 1px solid var(--line); background: var(--bg-2);
+  max-height: 46%; overflow-y: auto; animation: stepin var(--t-fast) var(--ease); }
+.histhead { display: flex; align-items: center; gap: 8px;
+  padding: 11px 16px 7px; font-size: 11.5px; color: var(--ink-3); }
+.histhead strong { color: var(--ink-2); font-size: 11.5px; font-weight: 600; }
+.histempty { padding: 16px; }
+.histempty p { margin: 0; font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+.histlist { padding: 0 8px 8px; }
+.hitem { display: flex; align-items: center; gap: 2px; border-radius: var(--r-sm); }
+.hitem:hover { background: var(--panel-2); }
+.hitem.on { background: color-mix(in srgb, var(--blue) 14%, transparent); }
+.hopen { flex: 1; min-width: 0; text-align: left; background: none; border: 0;
+  padding: 8px 10px; cursor: pointer; font: inherit; color: var(--ink-2); }
+.hopen strong { display: block; font-size: 12.5px; font-weight: 550;
+  color: var(--ink); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.hopen i { font-style: normal; font-size: 10.5px; color: var(--ink-3); }
+/* Only on the row being pointed at: a column of crosses beside every line
+   reads as a list of things to delete rather than a list of things to open. */
+.hdrop { opacity: 0; flex: none; }
+.hitem:hover .hdrop, .hdrop:focus-visible { opacity: 1; }
 
 .asklist.plain li { cursor: default; }
 .asklist.plain li:hover { border-color: var(--line); color: var(--ink-2);

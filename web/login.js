@@ -721,7 +721,23 @@
             trouble = true;
           }
         });
-        if (!trouble) leave();
+        if (trouble) return;
+        /* Saving the key made the server ask it what it can run and settle
+           on the best of those, so there is a real model to name here.  Say
+           which, because it is the one thing on this screen that was decided
+           for them, and then go -- long enough to read one line, not long
+           enough to be a step of its own. */
+        var got = answers[1] || {};
+        if (got.model) {
+          $("aiwhere").textContent = got.guessed
+            ? "Saved. " + got.model + " is set as a guess -- that service "
+              + "would not list what the key reaches. Settings can change it."
+            : "Saved. Using " + got.model + ", the strongest of the "
+              + got.models.length + " your key reaches.";
+          setTimeout(leave, 1600);
+          return;
+        }
+        leave();
       });
   });
 

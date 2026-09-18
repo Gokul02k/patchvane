@@ -103,9 +103,15 @@
     <span class="aimark">&#10022;</span>
     <div><h2>Assistant</h2><p>grounded in what this dashboard collected</p></div>
     <div class="spacer"></div>
+    <!-- An anticlockwise arrow rather than a clock face: the clock faces are
+         all in the emoji block, and a machine without an emoji font draws a
+         box where the button should be. -->
+    <button class="iconbtn" id="aipast" title="Earlier conversations"
+            aria-expanded="false">&#10226;</button>
     <button class="iconbtn" id="ainew" title="New chat">&#10133;</button>
     <button class="iconbtn" id="aiclose" title="Close (Esc)">&times;</button>
   </header>
+  <div id="aihist" class="aihist hidden"></div>
   <div id="aichat" class="aichat"></div>
   <div class="aiform">
     <div id="aipicker" class="aipicker"></div>

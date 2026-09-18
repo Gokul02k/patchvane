@@ -15,6 +15,11 @@ const S = {
      often quotes their reviewers, so it must not outlive their session. */
   chatWho: "",
   asking: false,
+  /* The conversation on screen, as the server knows it.  Empty until the
+     first answer, because a conversation with nothing in it is not one. */
+  chatId: "",
+  chats: [],
+  histOpen: false,
 };
 
 /* ------------------------------------------------------------- constants */
@@ -1321,17 +1326,33 @@ function readingPanel() {
   </div>`;
 }
 
-/* Which model this provider should use.  Without a key there is nothing to
-   list, so it just shows the one it would start from; with a key it offers
-   everything the account can actually reach, fetched on demand because
-   twenty providers' catalogues at once is a lot of requests for a page that
-   nobody may open. */
+/* Which model this provider should use.
+
+   Without a key there is no answer to give.  A name here would be this
+   dashboard's opinion from whenever it was last edited, and providers retire
+   a model the week the next one ships -- so what used to sit next to "no
+   key" was often a model that no longer existed, stated as though it were
+   settled.  It says what will happen instead.
+
+   With a key it is a fact: the list came from the provider when the key was
+   saved, and the one in the box is the most capable of them.  The rest are
+   fetched on demand, because twenty providers' catalogues at once is a lot
+   of requests for a page nobody may scroll. */
 function modelChoice(p) {
-  if (!p.ready) return `<span class="mono">${esc(p.model)}</span>`;
+  if (!p.ready) {
+    /* Unless this server pinned one, which is a decision somebody made on
+       purpose rather than a name nobody checked, so it is shown and said. */
+    return p.pinned
+      ? `<span class="mono">${esc(p.model)}</span>
+         <span class="hint tiny">pinned by this server</span>`
+      : `<span class="muted">chosen when you add a key</span>`;
+  }
 
   const got = (S.modelList || {})[p.id];
   if (!got) {
-    return `<span class="mono">${esc(p.model)}</span>
+    return `${p.model
+        ? `<span class="mono">${esc(p.model)}</span>`
+        : `<span class="muted">not chosen yet</span>`}
       <button class="link sm" ${act(loadModels, p.id)}>change</button>`;
   }
   if (got.loading) return `<span class="muted">reading the list\u2026</span>`;
@@ -1341,12 +1362,21 @@ function modelChoice(p) {
       <button class="link sm" ${act(loadModels, p.id)}>try again</button>`;
   }
 
+  /* Arrives ranked, so the list opens on the one worth having.  A model
+     they are already on that the provider no longer lists still belongs in
+     the box, or changing anything else would silently move them off it. */
   const names = got.models || [];
-  const known = names.includes(p.model) ? names : [p.model].concat(names);
+  const known = p.model && !names.includes(p.model)
+    ? [p.model].concat(names) : names;
   return `<select class="sel sm" ${actv("change", pickProviderModel, p.id)}>
       ${known.map((m) => `<option value="${esc(m)}" ${
-        m === p.model ? "selected" : ""}>${esc(m)}</option>`).join("")}
+        m === p.model ? "selected" : ""}>${esc(m)}${
+        m === got.best ? " \u2014 best on this key" : ""}</option>`).join("")}
     </select>
+    <p class="hint tiny">${plural(names.length, "model")} on this key,
+    strongest first.${got.best && got.best !== p.model
+      ? ` <button class="link" ${act(pickProviderModel, p.id, got.best)}>Use
+        ${esc(got.best)}</button>` : ""}</p>
     ${got.spares && got.spares.length
       ? `<p class="hint tiny">If this one runs out for the day the assistant
          falls back to ${got.spares.map(esc).join(", ")}.</p>` : ""}`;
@@ -1361,7 +1391,8 @@ async function loadModels(pid) {
                           { cache: "no-store" });
     const body = await r.json();
     S.modelList[pid] = body.ok
-      ? { models: body.models || [], spares: body.spares || [] }
+      ? { models: body.models || [], spares: body.spares || [],
+          best: body.best || "" }
       : { error: body.error || "Could not read the list." };
   } catch (e) {
     S.modelList[pid] = { error: "Could not reach the dashboard." };
@@ -2259,6 +2290,9 @@ function openAI() {
   $("ai").classList.add("open");
   $("aiscrim").classList.add("on");
   drawChat();
+  /* Fetched when the drawer opens rather than when the panel does, so the
+     count under the clock is right the first time it is looked at. */
+  loadChats().then(() => { if (S.histOpen) drawHistory(); });
 }
 
 function closeAI() {
@@ -2365,7 +2399,10 @@ function drawChat() {
           ? ` <button class="link" ${act(openAISettings)}>Add a key</button>` : ""}${
         m.retry ? ` <button class="link" ${act(retryAsk, m.retry)}>Ask again</button>` : ""}
          ${tried(m.trail)}</div>`
-      : `<div class="msg bot">${md(m.text)}${via(m)}</div>`).join("")
+      : `<div class="msg bot">${md(m.text)}
+         <div class="msgfoot">${via(m)}<span class="spacer"></span>
+           <button class="link" ${act(copyText, m.text)}>copy</button>
+         </div></div>`).join("")
     + (S.asking ? `<div class="msg bot thinking"><i></i><i></i><i></i></div>` : "");
   box.scrollTop = box.scrollHeight;
 }
@@ -2409,6 +2446,7 @@ async function sendAI() {
   } finally {
     S.asking = false;
     drawChat();
+    rememberChat();
   }
 }
 
@@ -2449,8 +2487,22 @@ async function saveKey(id) {
   S.status.ai = (body.ready || []).length > 0;
   S.status.ai_ready = body.ready || [];
   S.keyOpen = "";
+  /* The server asked the key what it runs and picked out of that, so the
+     list is already known here and opening the dropdown costs nothing. */
+  if (body.models && body.models.length) {
+    S.modelList = S.modelList || {};
+    S.modelList[id] = { models: body.models, best: body.model,
+                        spares: (S.modelList[id] || {}).spares || [] };
+  }
   toast(body.stored ? `${label(id)} key saved and remembered.`
                     : `${label(id)} key set for this session.`, "ok");
+  if (body.model) {
+    toast(body.guessed
+      ? `${label(id)} would not list its models, so this is set to `
+        + `${body.model} as a guess. Change it if it is wrong.`
+      : `Set to ${body.model}, the strongest of the ${body.models.length} `
+        + `your key reaches.`, body.guessed ? "" : "ok");
+  }
   render();
   testKey(id);          // say straight away whether it actually works
 }
@@ -2556,13 +2608,140 @@ function signOut() { snapDrop(); location.href = "/logout"; }
 
 /* Start again, with nothing carried over: the whole conversation goes to the
    model with every question, so an old thread is not just clutter on screen,
-   it is context the next answer will be built on. */
+   it is context the next answer will be built on.
+
+   Nothing is lost by this.  What was on screen was written down as it
+   happened and is one click away under the clock. */
 function newChat() {
   S.chat = [];
+  S.chatId = "";
+  S.histOpen = false;
   S.chatWho = (S.status && S.status.who) || "";
   drawChat();
   const input = $("aiinput");
   if (input) { input.value = ""; input.style.height = "auto"; input.focus(); }
+}
+
+/* ------------------------------------------------- conversations kept
+
+   A question worth asking once is worth finding again: what somebody asked
+   the assistant about a series three weeks ago is often exactly what they
+   want when the next version comes back.  So a conversation is written down
+   as it happens, on the server rather than in this browser, because the
+   dashboard is reachable from more than one machine and a history that only
+   exists on the laptop is a history that is missing whenever it matters. */
+
+async function loadChats() {
+  try {
+    const r = await fetch("/api/ai/chats", { cache: "no-store" });
+    if (!r.ok) return;
+    const body = await r.json();
+    S.chats = body.chats || [];
+  } catch (e) { /* the drawer works without the list */ }
+}
+
+/* Written down after each answer rather than on the way out: a browser that
+   is closed mid-conversation, or a laptop that sleeps and never comes back,
+   would otherwise take the whole thing with it. */
+async function rememberChat() {
+  const turns = S.chat.filter((m) => !m.error && m.text)
+    .map((m) => ({ role: m.role, text: m.text, provider: m.provider || "",
+                   model: m.model || "", label: m.label || "" }));
+  if (!turns.length) return;
+  try {
+    const r = await post("/api/ai/chat", { id: S.chatId, turns });
+    const body = await r.json();
+    if (!body.ok) return;
+    S.chatId = body.id;
+    S.chats = body.chats || S.chats;
+    if (S.histOpen) drawHistory();
+  } catch (e) { /* it stays on screen either way */ }
+}
+
+function toggleHistory() {
+  S.histOpen = !S.histOpen;
+  $("aipast").setAttribute("aria-expanded", S.histOpen ? "true" : "false");
+  if (S.histOpen) loadChats().then(drawHistory);
+  drawHistory();
+}
+
+function drawHistory() {
+  const box = $("aihist");
+  if (!box) return;
+  box.classList.toggle("hidden", !S.histOpen);
+  if (!S.histOpen) return;
+
+  if (!S.chats.length) {
+    box.innerHTML = `<div class="histempty">
+      <p>Nothing asked yet. Conversations turn up here as you have them, and
+      stay until you remove them.</p></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="histhead">
+      <strong>${plural(S.chats.length, "conversation")}</strong>
+      <span class="spacer"></span>
+      <button class="link" ${act(forgetChats)}>Remove all</button>
+    </div>
+    <div class="histlist">${S.chats.map((c) => `
+      <div class="hitem ${c.id === S.chatId ? "on" : ""}">
+        <button class="hopen" ${act(openChat, c.id)}>
+          <strong>${esc(c.title)}</strong>
+          <i>${esc(ago(c.updated))} \u00b7 ${plural(c.turns, "turn")}</i>
+        </button>
+        <button class="hdrop iconbtn" ${act(forgetChat, c.id)}
+          title="Remove this conversation">\u00d7</button>
+      </div>`).join("")}</div>`;
+}
+
+async function openChat(id) {
+  try {
+    const r = await fetch("/api/ai/chat?id=" + encodeURIComponent(id),
+                          { cache: "no-store" });
+    const body = await r.json();
+    if (!body.ok) { toast(body.error || "Could not open that.", "bad"); return; }
+    S.chat = (body.chat.turns || []).map(
+      (t) => ({ role: t.role, text: t.text, provider: t.provider,
+                model: t.model, label: t.label }));
+    S.chatId = body.chat.id;
+    S.histOpen = false;
+    $("aipast").setAttribute("aria-expanded", "false");
+    drawHistory();
+    drawChat();
+    const input = $("aiinput");
+    if (input) input.focus();
+  } catch (e) {
+    toast("Could not reach the dashboard.", "bad");
+  }
+}
+
+async function forgetChat(id) {
+  try {
+    const r = await post("/api/ai/chat/forget", { id });
+    const body = await r.json();
+    S.chats = body.chats || [];
+    /* Removing the one being read leaves the words on screen but nothing
+       behind them, so it becomes a new conversation rather than quietly
+       writing itself back on the next answer. */
+    if (id === S.chatId) S.chatId = "";
+    drawHistory();
+  } catch (e) {
+    toast("Could not reach the dashboard.", "bad");
+  }
+}
+
+async function forgetChats() {
+  if (!confirm("Remove every saved conversation? This cannot be undone."))
+    return;
+  try {
+    const r = await post("/api/ai/chat/forget", { all: true });
+    const body = await r.json();
+    S.chats = body.chats || [];
+    S.chatId = "";
+    drawHistory();
+    toast("History cleared.");
+  } catch (e) {
+    toast("Could not reach the dashboard.", "bad");
+  }
 }
 
 /* Signing in as somebody else must not inherit their conversation. */
@@ -2570,6 +2749,9 @@ function chatBelongsToMe() {
   const who = (S.status && S.status.who) || "";
   if (S.chatWho && S.chatWho !== who) {
     S.chat = [];
+    S.chatId = "";
+    S.chats = [];
+    S.histOpen = false;
     S.asking = false;
     /* Somebody else is signed in now; the page kept for the last one goes
        with their conversation. */
@@ -3056,6 +3238,7 @@ async function boot() {
   $("aibtn").addEventListener("click", () => askAI());
   $("aiclose").addEventListener("click", closeAI);
   $("ainew").addEventListener("click", newChat);
+  $("aipast").addEventListener("click", toggleHistory);
   $("aiscrim").addEventListener("click", closeAI);
   $("thclose").addEventListener("click", closeThread);
   $("thscrim").addEventListener("click", closeThread);
