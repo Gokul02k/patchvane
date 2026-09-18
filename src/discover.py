@@ -579,6 +579,10 @@ COMMIT_INFO = re.compile(
 DIFFSTAT = re.compile(r"class='diffstat'.*?</table>", re.S)
 DIFFSTAT_ROW = re.compile(
     r"<td class='upd'>.*?>([^<]+)</a></td>\s*<td[^>]*>(\d+)</td>", re.S)
+# What a mirror says in place of a commit it no longer carries itself.
+MERGED_NOTICE = re.compile(
+    r"<div class='merged-notice'>.*?<a href='(/[^']+/commit/\?id=[^']+)'",
+    re.S)
 
 
 def commit(cid: str, tree: str = "mainline") -> dict:
@@ -602,6 +606,21 @@ def commit(cid: str, tree: str = "mainline") -> dict:
         body = fetch(url, timeout=45)
         if body is None:
             return None
+        at, where = url, tree
+        # linux-next rebuilds daily, so once a commit of its own has reached
+        # mainline cgit stops serving the message and the diff for it and
+        # says where it went instead.  Following that is the difference
+        # between a commit and an empty page for everything old enough to
+        # have landed, which is most of what anybody clicks.
+        moved = MERGED_NOTICE.search(body)
+        if moved:
+            gone = KORG + htmllib.unescape(moved.group(1))
+            page = fetch(gone, timeout=45)
+            if page:
+                body, at = page, gone
+                where = next((n for n, p in list(TREES.items())
+                              + list(MAINTAINER_TREES.items())
+                              if ("%s/commit/" % p) in gone), where)
         info = {}
         for kind, value, extra in COMMIT_INFO.findall(body):
             info.setdefault(kind.lower(), (strip_tags(value),
@@ -617,8 +636,8 @@ def commit(cid: str, tree: str = "mainline") -> dict:
             "ok": True,
             "commit": cid,
             "short": cid[:12],
-            "tree": tree,
-            "url": url,
+            "tree": where,
+            "url": at,
             "subject": strip_tags(subject.group(1)) if subject else "",
             "body": strip_tags(msg.group(1)) if msg else "",
             "author": info.get("author", ("", ""))[0],

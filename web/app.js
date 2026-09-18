@@ -251,8 +251,7 @@ function patchColumns() {
       render: (r) => [
         link(r.lore, "lore"),
         r.pw_url ? `<a href="${esc(r.pw_url)}" target="_blank" rel="noreferrer">pw</a>` : "",
-        r.landed[0] ? `<a href="${esc(r.landed[0].url)}" target="_blank"
-          rel="noreferrer" class="mono">${esc(r.landed[0].short)}</a>` : "",
+        r.landed[0] ? sha(landedIn(r.landed)) : "",
       ].filter(Boolean).join(" ") },
   ];
 }
@@ -493,6 +492,54 @@ function showBucket(key) {
   render();
 }
 
+/* The feed stores a row as a subject and an address, because that is all
+   lore and cgit gave it.  Both open here instead: a merged or queued row
+   names a commit in its address, and the rest name a message in a thread
+   that belongs to one of these patches, which is enough to find it. */
+function feedTarget(a) {
+  const hit = (a.url || "").match(/[?&]id=([0-9a-f]{7,40})\b/i);
+  if (hit) {
+    return act(openCommit, hit[1],
+               treeHolding({ trees: (a.note || "").split(/,\s*/) }));
+  }
+  const id = patchFor(a.text);
+  return id ? act(openThread, id, a.text) : "";
+}
+
+/* A subject as the feed writes it and the same subject as the patch list
+   writes it are rarely the same string: one is a reply, carries a [PATCH
+   v3] tag, or counts the series after it. */
+function plainSubject(s) {
+  return String(s || "")
+    .replace(/^(\s*(re|fwd|aw)\s*:\s*)+/i, "")
+    .replace(/^\s*\[[^\]]*\]\s*/, "")
+    .replace(/\s*\(\d+\s+patch(es)?\)\s*$/i, "")
+    .replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/* Built on the first row that asks and kept, because every row of the feed
+   asks.  Held against the collection it was built from rather than cleared
+   by hand, so a fresh collection cannot be read through a stale index. */
+function patchFor(text) {
+  if (!S.names || S.names.of !== S.data) {
+    const by = {};
+    const put = (name, id) => {
+      const k = plainSubject(name);
+      if (k && id && !(k in by)) by[k] = id;
+    };
+    for (const p of (S.data.patches || [])) {
+      const id = p.msgid || p.series;
+      put(p.subject, id);
+      put(p.raw_subject, id);
+      put(p.series_name, id);
+      for (const v of (p.versions || [])) put(v.subject, id);
+    }
+    for (const s of (S.data.series || [])) put(s.name, s.id);
+    S.names = { of: S.data, by };
+  }
+  return S.names.by[plainSubject(text)] || "";
+}
+
 function feedItem(a, i) {
   const meta = {
     sent:    { c: "blue",   i: "\u2191", t: "Posted" },
@@ -503,13 +550,19 @@ function feedItem(a, i) {
     ci:      { c: "purple", i: "\u2699", t: "CI" },
   }[a.kind] || { c: "grey", i: "\u2022", t: a.kind };
   const col = C[meta.c];
+  const open = feedTarget(a);
+  /* A bot reporting on somebody else's thread is the one row with nothing
+     here to open, so that one keeps a way to read it where it was said. */
+  const away = !open && a.url
+    ? ` \u00b7 <a href="${esc(a.url)}" target="_blank"
+        rel="noreferrer">lore \u2197</a>` : "";
   return `<div class="feeditem" data-reveal style="--i:${i}">
     <div class="ic" style="background:${col}22;color:${col}">${meta.i}</div>
     <div class="tx">
       <div class="t1" style="color:${col}">${esc(meta.t)}</div>
-      <div class="t2">${a.url ? `<a href="${esc(a.url)}" target="_blank"
-        rel="noreferrer">${esc(a.text)}</a>` : esc(a.text)}</div>
-      <div class="t3">${esc(a.note || "")} \u00b7 ${ago(a.ts)}</div>
+      <div class="t2">${open ? `<a href="#" ${open}>${esc(a.text)}</a>`
+        : esc(a.text)}</div>
+      <div class="t3">${esc(a.note || "")} \u00b7 ${ago(a.ts)}${away}</div>
     </div></div>`;
 }
 
@@ -618,7 +671,7 @@ function viewLanded() {
   return `<div class="kpis four">${cards}</div>` +
     grid("landed", rows, [
       { key: "short", label: "Commit", cls: "mono nowrap", csv: (r) => r.short,
-        render: (r) => `<a href="${esc(r.url)}" target="_blank" rel="noreferrer">${mark(r.short)}</a>` },
+        render: (r) => sha(r) },
       { key: "subject", label: "Subject", cls: "subject", width: "46%",
         csv: (r) => r.subject,
         render: (r) => subj(r.msgid || r.series, r.subject) + (r.versions > 1
@@ -1975,12 +2028,19 @@ function mergedTable(a) {
   }
   return grid("findmerged", a.merged, [
     /* The commit opens here rather than on git.kernel.org: reading three of
-       them should not be three tabs and three page loads. */
+       them should not be three tabs and three page loads.  The tree is
+       named rather than left to default, because act() hands the element
+       and the event on to whatever it calls, so an argument left off here
+       would arrive as a DOM node where the tree should be. */
     { key: "short", label: "Commit", cls: "mono nowrap", csv: (r) => r.short,
-      render: (r) => `<button class="link mono" ${act(openCommit, r.commit)}
+      render: (r) => `<button class="link mono"
+        ${act(openCommit, r.commit, "mainline")}
         title="Read this commit">${mark(r.short)}</button>` },
     { key: "subject", label: "Subject", cls: "subject", width: "46%",
-      csv: (r) => r.subject, render: (r) => mark(r.subject) },
+      csv: (r) => r.subject,
+      render: (r) => `<button class="link"
+        ${act(openCommit, r.commit, "mainline")}
+        title="Read this commit">${mark(r.subject)}</button>` },
     /* The exact tag, release candidates included, because "v7.4-rc1" is the
        answer and "v7.4" is only where it ends up.  Both are here: the
        numbered release is the one somebody installs. */
@@ -2019,7 +2079,9 @@ function queuedPanel(a) {
       in mainline yet.</p>
       <ul class="asklist plain">${a.in_next.map((c) =>
         `<li><button class="link mono" ${act(openCommit, c.commit, "linux-next")}
-           >${esc(c.short)}</button> ${esc(c.subject)}
+           >${esc(c.short)}</button>
+           <button class="link" ${act(openCommit, c.commit, "linux-next")}
+           >${esc(c.subject)}</button>
            <span class="muted">${esc(c.date)}</span></li>`).join("")}</ul>
     </div></div>`;
 }
@@ -2054,8 +2116,9 @@ function treeSweep(a, deep) {
             <td class="muted nowrap">${esc(t.newest)}</td></tr>
             <tr class="sub"><td colspan="4"><div class="sub2">${
               t.commits.slice(0, 4).map((c) =>
-                `<a href="${esc(c.url)}" target="_blank" rel="noreferrer"
-                   class="mono">${esc(c.short)}</a> ${esc(c.subject)}`)
+                `${sha({ commit: c.commit, short: c.short, tree: t.tree })}
+                 <button class="link" ${act(openCommit, c.commit, t.tree)}
+                 >${esc(c.subject)}</button>`)
                 .join("<br>")}</div></td></tr>`).join("")
         + `</tbody></table>`;
     }
@@ -2479,7 +2542,10 @@ function openThread(id, subject) {
    where they were. The link out is still in the header, because cgit has
    the diff and the history and this does not. */
 function openCommit(cid, tree) {
-  const which = tree || "mainline";
+  /* act() passes the element and the event along after the arguments given
+     to it, so a caller that leaves the tree off sends a DOM node here.
+     Mainline is the right guess anyway for a commit named without one. */
+  const which = typeof tree === "string" && tree ? tree : "mainline";
   S.thread = { id: cid, kind: "commit", tree: which, loading: true,
                subject: cid.slice(0, 12), data: null, error: "" };
   $("thread").classList.add("open");
@@ -2566,6 +2632,34 @@ function closeThread() {
 function subj(id, text, cls) {
   return `<a class="${cls || ""}" href="#" ${act(openThread, id, text)}
     >${mark(text)}</a>`;
+}
+
+/* Of the trees a patch landed in, the one worth linking to.  linux-next is
+   rebuilt daily and drops a commit of its own once mainline has it, so a
+   patch that made it all the way reads best from Linus' tree. */
+function landedIn(rows) {
+  return rows.find((l) => l.tree === "mainline") || rows[0];
+}
+
+/* Which tree to read a commit out of, for the same reason. */
+function treeHolding(row) {
+  const t = row.trees || [];
+  if (row.mainline || t.indexOf("mainline") >= 0) return "mainline";
+  if (row.tree) return row.tree;
+  if (row.in_next || t.indexOf("linux-next") >= 0) return "linux-next";
+  return t[0] || (row.maintainer_trees || [])[0] || "mainline";
+}
+
+/* A commit id that opens here, for the same reason a subject does.  Reading
+   five commits off a list should cost five clicks, not five tabs on
+   git.kernel.org and no way back to the place in the list. cgit is still
+   one click away in the drawer header for the diff itself. */
+function sha(row, cls) {
+  const id = row.commit || row.short;
+  if (!id) return "";
+  const short = row.short || id.slice(0, 12);
+  return `<a class="mono ${cls || ""}" href="#"
+    ${act(openCommit, id, treeHolding(row))}>${mark(short)}</a>`;
 }
 
 function drawThread() {
@@ -2663,8 +2757,7 @@ function whereItLanded(p) {
   return `<section class="thsec"><h3>The commit</h3>
     <table class="thtable"><tbody>${rows.map((l) => `<tr>
       <td class="thtree">${esc(l.tree)}</td>
-      <td><a href="${esc(l.url)}" target="_blank" rel="noreferrer"
-        ><code>${esc(l.short)}</code></a></td>
+      <td>${sha(l)}</td>
       <td class="thdim">${l.author ? esc(l.author) : ""}</td>
       <td class="thdim">${l.date ? esc(l.date.slice(0, 10)) : ""}</td>
     </tr>`).join("")}</tbody></table></section>`;
