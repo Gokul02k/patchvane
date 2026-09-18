@@ -44,6 +44,16 @@ services:
       # https://patchvane.onrender.com -- no trailing slash.
       - key: PATCHVANE_URL
         sync: false
+      # Settings > Support. Without these the tab still answers questions but
+      # has nowhere to send a report, and says so. The token needs nothing
+      # beyond issues:write on the one repository named here.
+      - key: PATCHVANE_GITHUB_REPO
+        sync: false
+      - key: PATCHVANE_GITHUB_TOKEN
+        sync: false
+      # Where ordinary feedback goes, as opposed to bugs.
+      - key: PATCHVANE_FEEDBACK_EMAIL
+        sync: false
       # The free plan has no disk that survives anything, and Render restarts
       # free services whenever it likes, so snapshot more often than the
       # ten-minute default.
