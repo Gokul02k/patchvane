@@ -48,7 +48,7 @@
 
   /* --------------------------------------------------------- what shows */
 
-  var STEPS = ["signin", "signup", "forgot", "code", "password"];
+  var STEPS = ["signin", "signup", "forgot", "code", "password", "extras"];
 
   function show(step, focus) {
     S.step = step;
@@ -111,7 +111,8 @@
   function clearAll() {
     shout("");
     ["who", "password", "first", "last", "username", "gender", "email",
-     "fmail", "code", "pw1", "pw2"].forEach(function (f) { bad(f, ""); });
+     "fmail", "code", "pw1", "pw2", "pic", "aikey"]
+      .forEach(function (f) { bad(f, ""); });
   }
 
   /* A complaint about a box goes away the moment they start putting it
@@ -527,9 +528,182 @@
           landed(out);
           return;
         }
-        location.href = out.to || "/";
+        /* Signed in from here on, which is what lets the optional step
+           afterwards use the ordinary endpoints. Resetting a password has
+           nothing optional to offer, so it goes straight through. */
+        if (S.kind === "signup") openExtras(out);
+        else location.href = out.to || "/";
       });
   });
+
+  /* ----------------------------------------------- the optional last step */
+
+  /* The account exists by now.  Nothing on this screen is required, nothing
+     on it can fail in a way that costs them the account, and "Skip for now"
+     is as complete an answer as filling it in. */
+
+  var PIC = "";               /* the shrunk data URL, until it is sent */
+  var INITIAL = "?";          /* what the circle shows with no picture in it */
+
+  function openExtras(out) {
+    var called = (out.first || "").trim();
+    INITIAL = (called.charAt(0) || "?").toUpperCase();
+    $("extitle").textContent = called ? "You are in, " + called : "You are in";
+    $("picprev").textContent = INITIAL;
+    show("extras");
+    loadProviders();
+  }
+
+  function leave() { location.href = "/"; }
+
+  /* The dashboard's list of models, which is readable now there is a
+     session.  If it cannot be reached the whole row goes away rather than
+     offering an empty menu. */
+  function loadProviders() {
+    fetch("/api/ai/providers", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (out) {
+        var list = (out.providers || []).filter(function (p) {
+          return p.where && !/YOUR-|example\.com/.test(p.endpoint || "");
+        });
+        if (!list.length) throw new Error("none");
+        var sel = $("aiprov");
+        sel.innerHTML = "";
+        list.forEach(function (p) {
+          var opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.label;
+          opt.dataset.where = p.where || "";
+          sel.appendChild(opt);
+        });
+        sayWhere();
+      })
+      .catch(function () {
+        $("aiprov").closest(".field").hidden = true;
+        $("aikey").closest(".field").hidden = true;
+      });
+  }
+
+  function sayWhere() {
+    var sel = $("aiprov");
+    var where = (sel.options[sel.selectedIndex] || {}).dataset;
+    $("aiwhere").textContent = where && where.where
+      ? "Keys come from " + where.where + ". The assistant answers questions "
+        + "about your own patches."
+      : "";
+  }
+
+  on($("aiprov"), "change", sayWhere);
+
+  /* The picture is shrunk here rather than sent whole: a phone camera gives
+     four megabytes and a 26 pixel circle needs none of it.  Read as a data
+     URL because this page's content policy allows data: images and not
+     blob:. */
+  function shrink(file, then, fail) {
+    var fr = new FileReader();
+    fr.onerror = function () { fail("That file could not be read."); };
+    fr.onload = function () {
+      var img = new Image();
+      img.onerror = function () { fail("That is not a picture we can read."); };
+      img.onload = function () {
+        var side = Math.min(img.width, img.height);
+        if (!side) return fail("That picture is empty.");
+        var c = document.createElement("canvas");
+        c.width = c.height = 256;
+        var g = c.getContext("2d");
+        g.imageSmoothingQuality = "high";
+        g.drawImage(img, (img.width - side) / 2, (img.height - side) / 2,
+                    side, side, 0, 0, 256, 256);
+        then(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+
+  on($("picpick"), "click", function () {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp";
+    on(input, "change", function () {
+      var file = (input.files || [])[0];
+      if (!file) return;
+      bad("pic", "");
+      shrink(file, function (url) {
+        PIC = url;
+        var prev = $("picprev");
+        prev.innerHTML = "";
+        var img = new Image();
+        img.src = url;
+        img.alt = "";
+        prev.appendChild(img);
+        $("picdrop").hidden = false;
+      }, function (why) { bad("pic", why); });
+    });
+    input.click();
+  });
+
+  on($("picdrop"), "click", function () {
+    PIC = "";
+    $("picprev").textContent = INITIAL;
+    $("picdrop").hidden = true;
+    bad("pic", "");
+  });
+
+  on($("skipextras"), "click", leave);
+
+  on($("go-extras"), "click", function () {
+    if (S.busy) return;
+    clearAll();
+    var key = ($("aikey").value || "").trim();
+    var provider = ($("aiprov").value || "");
+    if (!PIC && !key) return leave();
+    busy($("go-extras"), true, "Saving\u2026");
+
+    /* Each is sent on its own and each reports against its own field: a key
+       the model rejects should not cost them the picture, and either can be
+       put right in Settings afterwards. */
+    var jobs = [
+      PIC ? toApp("/api/avatar", { image: PIC }) : null,
+      key && provider
+        ? toApp("/api/ai/key",
+                { provider: provider, key: key, remember: true })
+        : null,
+    ];
+    Promise.all(jobs.map(function (j) { return j || { ok: true }; }))
+      .then(function (answers) {
+        busy($("go-extras"), false);
+        var trouble = false;
+        [["pic", answers[0]], ["aikey", answers[1]]].forEach(function (pair) {
+          if (pair[1] && pair[1].error) {
+            bad(pair[0], pair[1].error);
+            trouble = true;
+          }
+        });
+        if (!trouble) leave();
+      });
+  });
+
+  /* The dashboard's own endpoints rather than the sign-up ones, which is
+     what the session we now hold is for. */
+  function toApp(path, body) {
+    return fetch(path, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "patchvane",
+      },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (out) {
+        if (!r.ok && !out.error) out.error = "That could not be saved.";
+        return out;
+      });
+    }).catch(function () {
+      return { error: "Could not reach the server." };
+    });
+  }
 
   /* ------------------------------------------------------- odds and ends */
 

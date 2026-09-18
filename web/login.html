@@ -212,6 +212,55 @@
       <p class="note">Patchvane will never email you your password, and will
       never ask for it anywhere but this page.</p>
     </section>
+
+    <!-- ------------------------------------------------- optional extras -->
+    <!-- After the account exists, not before: nothing here is worth standing
+         between somebody and the dashboard they just signed up for, so the
+         account is already made and this step can be walked past. -->
+    <section class="step hidden" id="step-extras">
+      <h2 id="extitle">You are in</h2>
+      <p class="lead">Two optional things, both of which can wait. Settings
+      has them afterwards.</p>
+
+      <div class="field">
+        <label>Profile picture</label>
+        <div class="picrow">
+          <span class="avatar big shot" id="picprev">?</span>
+          <div>
+            <button type="button" class="btn sm" id="picpick">Choose a picture</button>
+            <button type="button" class="link" id="picdrop" hidden>Remove</button>
+            <p class="hint tiny">Stays on this server, shown only to you.</p>
+          </div>
+        </div>
+        <p class="fielderr" id="e-pic"></p>
+      </div>
+
+      <div class="field">
+        <label for="aiprov">Assistant</label>
+        <select id="aiprov"></select>
+        <p class="hint tiny" id="aiwhere">The assistant answers questions about
+        your own patches. It needs a key from whichever model you want to
+        use.</p>
+      </div>
+
+      <div class="field">
+        <label for="aikey">API key</label>
+        <span class="pwwrap">
+          <input id="aikey" type="password" autocomplete="off" maxlength="300"
+                 spellcheck="false" placeholder="paste it here, or leave empty">
+          <button type="button" class="peek" data-peek="aikey"
+                  aria-label="Show key">show</button>
+        </span>
+        <p class="hint tiny">Encrypted where it sits, used only for your own
+        questions.</p>
+        <p class="fielderr" id="e-aikey"></p>
+      </div>
+
+      <button class="btn primary" type="button" id="go-extras">Save and continue</button>
+      <div class="linkrow">
+        <button type="button" class="link" id="skipextras">Skip for now</button>
+      </div>
+    </section>
   </div>
 </div>
 

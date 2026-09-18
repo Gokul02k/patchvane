@@ -277,7 +277,11 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
   font-size: 12px; font-weight: 700; color: #fff;
   background: linear-gradient(135deg, var(--blue), var(--cyan));
+  overflow: hidden; flex: none;
 }
+/* A photograph is rarely square and a face should not be squashed into a
+   circle, so it is cropped to fill rather than stretched to fit. */
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .uname { font-size: 12px; color: var(--ink-2); max-width: 150px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .out { color: var(--ink-3); font-size: 13px; padding: 0 4px; }
@@ -1382,6 +1386,9 @@ button.link.sm { font-size: 11px; margin-left: 6px; }
   justify-content: space-between; gap: 12px; font-size: 13px; }
 .progline .pct { font-variant-numeric: tabular-nums; color: var(--ink-3); }
 body.firstrun nav, body.firstrun .aibtn { opacity: .35; pointer-events: none; }
+/* Except the one section that reads the public archives rather than this
+   person's collection, and so has something to show while they wait. */
+body.firstrun nav .navitem.ready { opacity: 1; pointer-events: auto; }
 
 /* The same thing in the corner, for a collection that is not the first one.
    "Collecting now" said only that something was happening; this says how
@@ -1445,6 +1452,65 @@ body.firstrun nav, body.firstrun .aibtn { opacity: .35; pointer-events: none; }
 .profilehead { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
 .profilehead h3 { margin: 0; font-size: 17px; font-weight: 650; }
 .avatar.big { width: 46px; height: 46px; font-size: 19px; }
+
+/* The picture is its own button, because the thing you want to click to
+   change a picture is the picture.  The label only appears over it on the
+   way in, so it is a portrait at rest and an invitation on hover. */
+.avatar.shot { width: 72px; height: 72px; font-size: 27px; padding: 0;
+  border: 0; cursor: pointer; position: relative; }
+.avatar.shot .shotlb {
+  position: absolute; inset: auto 0 0 0; padding: 4px 0 5px;
+  font-size: 9.5px; font-weight: 650; letter-spacing: .04em;
+  text-transform: uppercase; color: #fff; background: rgba(0, 0, 0, .58);
+  opacity: 0; transition: opacity var(--t-fast) var(--ease);
+}
+.avatar.shot:hover .shotlb,
+.avatar.shot:focus-visible .shotlb { opacity: 1; }
+.avatar.shot:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* The wait beside a line of text, rather than the big one in the middle of
+   an empty page. */
+.thwait .spin {
+  width: 18px; height: 18px; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--blue);
+  animation: spin var(--t-loop) linear infinite;
+}
+
+/* Discover: a search box, and what comes back from it. */
+.findrow { display: flex; gap: 10px; margin-bottom: 14px; }
+.findrow input {
+  flex: 1; min-width: 0; padding: 11px 14px; font-size: 14px;
+  color: var(--ink); background: var(--panel-2); border-radius: 11px;
+  border: 1px solid var(--line);
+}
+.findrow input:focus {
+  outline: none; border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
+}
+.findrow .btn { white-space: nowrap; }
+
+/* One block of addresses, with the one thing anybody wants to do to a block
+   of addresses. */
+.sendbox { margin-bottom: 14px; }
+.sendhead { display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 4px; font-size: 12.5px; color: var(--ink-3); }
+.sendbox .asklist li { line-height: 1.75; }
+.sendbox .mono { color: var(--ink-2); }
+
+/* The commits under a maintainer tree, tucked under its row: the two rows
+   are one entry, so only the second one carries the rule below it. */
+table.plain tr.main td { border-bottom: 0; padding-bottom: 3px; }
+table.plain tr.sub td { padding-top: 0; }
+table.plain tr.sub .sub2 { line-height: 1.7; }
+table.plain tr:hover { background: none; }
+table.plain tr.main:hover, table.plain tr.main:hover + tr.sub {
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+
+/* The optional step after signing up: a picture beside what to do with it. */
+.picrow { display: flex; align-items: center; gap: 14px; }
+.picrow .avatar.shot { cursor: default; }
+.picrow .btn.sm { margin-right: 8px; }
 .btnrow { display: flex; gap: 10px; margin-top: 16px; }
 .btn.danger { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); }
 .btn.danger:hover { background: color-mix(in srgb, var(--red) 14%, transparent); }

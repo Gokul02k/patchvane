@@ -53,7 +53,7 @@ const NAV = [
   ["outcomes",    "Outcomes",    "\u2713"],
   ["discussions", "Discussions", "\u2709"],
   ["insights",    "Insights",    "\u2197"],
-  ["settings",    "Settings",    "\u2699"],
+  ["discover",    "Discover",    "\u2315"],
 ];
 
 /* Terminal states: the patch has stopped moving, one way or another. */
@@ -1134,20 +1134,22 @@ function setGeneral() {
       unusual.</p>
     </div></div>
 
-    <div class="panel" data-reveal><header><h2>This account</h2></header><div class="body">
+    <div class="panel" data-reveal><header><h2>This server</h2></header><div class="body">
       <dl class="kv">
-        <dt>Name</dt><dd>${esc(d.profile.name)}</dd>
-        <dt>Address</dt><dd>${esc(d.profile.email)}</dd>
         <dt>Running as</dt><dd>${esc(st.mode || "local")}</dd>
         <dt>Data collected</dt><dd>${esc(new Date(d.generated).toLocaleString())}
           <span class="muted">(${ago(d.generated)})</span></dd>
         <dt>Collection took</dt><dd>${esc(d.collect_seconds)} seconds</dd>
-        <dt>Your mail on lore</dt><dd>${link(d.profile.lore, "browse \u2197")}</dd>
-        <dt>Your patchwork</dt><dd>${link(d.profile.patchwork, "browse \u2197")}</dd>
       </dl>
-      <div class="btnrow">
-        <button class="btn" ${act(toggleTheme)}>Switch theme</button>
-        <button class="btn ghost" ${act(signOut)}>Sign out</button>
+      <div class="field">
+        <label>Appearance</label>
+        <div class="presets">
+          ${["dark", "light"].map((t) => `<button class="chip ${
+            (document.documentElement.dataset.theme || "dark") === t ? "on" : ""}"
+            ${act(setTheme, t)}>${t === "dark" ? "Dark" : "Light"}</button>`).join("")}
+        </div>
+        <p class="hint">Remembered against your account, so it follows you to
+        another machine rather than living in this browser alone.</p>
       </div>
     </div></div>
   </div>`;
@@ -1418,6 +1420,481 @@ function setSources() {
   return `<div class="row2" style="align-items:start">${cards}</div>`;
 }
 
+/* ------------------------------------------------------------- discover */
+
+/* The two questions that are not about your own patches: what the public
+   archives hold under somebody else's address, and who a patch touching a
+   given file is supposed to go to.  Both read the same places the collector
+   reads, and neither of them needs anything private of anybody's. */
+
+S.find = { q: "", author: null, busy: false, error: "", poll: 0,
+           mq: "", maint: null, mbusy: false, merror: "" };
+
+function viewDiscover() {
+  return tabs("find", [
+    ["people", "An author", findAuthorView],
+    ["send", "Who to send to", findSendView],
+  ]);
+}
+
+function findTyped(which, value) { S.find[which] = value; }
+
+function searchRow(which, go, value, placeholder, busy, label) {
+  return `<div class="findrow" data-reveal>
+    <input type="search" data-find="${which}" value="${esc(value)}"
+           placeholder="${esc(placeholder)}" spellcheck="false"
+           autocapitalize="off" ${actv("input", findTyped, which)}>
+    <button class="btn primary" ${act(go)} ${busy ? "disabled" : ""}>${
+      busy ? "Looking\u2026" : esc(label)}</button>
+  </div>`;
+}
+
+/* ---------------------------------------------------------- an author */
+
+async function findGo() {
+  const q = (S.find.q || "").trim();
+  if (!q) { toast("Type an email address first.", "bad"); return; }
+  S.find.busy = true;
+  S.find.error = "";
+  render();
+  const r = await fetch("/api/discover/author?email=" + encodeURIComponent(q),
+                        { cache: "no-store" });
+  const out = await r.json().catch(() => ({}));
+  S.find.busy = false;
+  if (!out.ok) {
+    S.find.author = null;
+    S.find.error = out.error || "That lookup did not work. Try again.";
+  } else {
+    S.find.author = out;
+  }
+  render();
+  findWatch();
+}
+
+/* The maintainer tree sweep runs behind the page, so while it is going the
+   answer is asked for again every few seconds.  One timer, ever. */
+function findWatch() {
+  const a = S.find.author;
+  if (!a || !a.deep || a.deep.state !== "running") return;
+  if (S.find.poll) return;
+  S.find.poll = setTimeout(async () => {
+    S.find.poll = 0;
+    const who = (S.find.author || {}).email;
+    if (!who || S.view !== "discover") return;
+    const r = await fetch("/api/discover/author?email=" + encodeURIComponent(who),
+                          { cache: "no-store" });
+    const out = await r.json().catch(() => ({}));
+    if (out.ok && S.find.author && S.find.author.email === out.email) {
+      S.find.author = out;
+      render();
+      findWatch();
+    }
+  }, 5000);
+}
+
+async function findDeep() {
+  const who = (S.find.author || {}).email;
+  if (!who) return;
+  S.find.author.deep = { state: "running", done: 0,
+                         total: (S.find.author.deep || {}).total || 80 };
+  render();
+  const r = await post("/api/discover/deep", { email: who });
+  const out = await r.json().catch(() => ({}));
+  if (out.deep) S.find.author.deep = out.deep;
+  render();
+  findWatch();
+}
+
+function findAuthorView() {
+  const f = S.find;
+  const head = searchRow("q", findGo, f.q,
+                         "an address they send patches from",
+                         f.busy, "Look them up");
+  const blurb = `<p class="hint" style="margin:0 0 14px">Counted from
+    patchwork and git.kernel.org, which is what everybody can see. Nothing
+    here comes from anyone's dashboard.</p>`;
+
+  if (f.busy && !f.author) {
+    return head + blurb + `<div class="panel wide"><div class="body">
+      <div class="thwait"><span class="spin"></span>
+      Reading patchwork and git.kernel.org\u2026</div></div></div>`;
+  }
+  if (f.error) {
+    return head + blurb + `<div class="panel wide"><div class="body">
+      <div class="empty"><h3>${esc(f.error)}</h3></div></div></div>`;
+  }
+  if (!f.author) {
+    return head + blurb + `<div class="panel wide"><div class="body">
+      <div class="empty tall">
+        <h3>Look up anybody who posts patches</h3>
+        <p>How much they have sent, how much was taken, what is queued in
+        linux-next and what has reached Linus' tree &mdash; with the commit
+        and the release it went out in.</p>
+      </div></div></div>`;
+  }
+  return head + authorResult(f.author);
+}
+
+function authorResult(a) {
+  const c = a.counts;
+  const deep = a.deep || {};
+  const n = (v) => (v < 0 ? "\u2014" : v);
+  const gone = "not reachable just now";
+  const cards = [
+    ["blue", "Patches sent", n(c.submitted),
+     a.sources.patchwork ? "as patchwork counts them" : gone],
+    ["purple", "Accepted", n(c.accepted),
+     a.sources.patchwork ? "a maintainer took it" : gone],
+    ["cyan", "Queued in linux-next", n(c.in_next),
+     a.sources.git ? "not in mainline yet" : gone],
+    ["green", "In Linus' tree",
+     c.merged < 0 ? "\u2014" : c.merged + (a.more.merged ? "+" : ""),
+     !a.sources.git ? gone
+       : a.more.merged ? "the most recent " + c.merged : "merged upstream"],
+  ].map(([cls, label, v, sub], i) =>
+    /* A plain value rather than an animated counter: these can read "200+"
+       or a dash, and a counter can only count to a number. */
+    `<div class="kpi ${cls} flat" data-reveal style="--i:${i}">
+      <div class="label">${esc(label)}</div>
+      <span class="value">${esc(String(v))}</span>
+      <div class="sub">${esc(sub)}</div></div>`).join("");
+
+  const notes = (a.notes || []).length
+    ? `<p class="hint" style="margin:-4px 0 14px">${
+        a.notes.map(esc).join(" &middot; ")}</p>`
+    : "";
+
+  return `<div class="kpis four">${cards}</div>${notes}`
+    + `<p class="hint" style="margin:0 0 14px">
+       ${esc(a.email)} &middot; <a href="${esc(a.lore)}" target="_blank"
+       rel="noreferrer">their posts on lore \u2197</a> &middot;
+       <a href="${esc(a.patchwork)}" target="_blank" rel="noreferrer">on
+       patchwork \u2197</a> &middot; answered in ${esc(String(a.seconds))}s</p>`
+    + mergedTable(a) + treeSweep(a, deep) + queuedPanel(a);
+}
+
+function mergedTable(a) {
+  if (!a.sources.git) {
+    return `<div class="panel wide" data-reveal><header><h2>In Linus' tree</h2>
+      </header><div class="body"><div class="empty">
+      <h3>git.kernel.org did not answer</h3>
+      <p>So there is no list to show. This says nothing about whether their
+      patches landed &mdash; only that the place that knows could not be
+      reached. Try again in a moment.</p></div></div></div>`;
+  }
+  if (!a.merged.length) {
+    return `<div class="panel wide" data-reveal><header><h2>In Linus' tree</h2>
+      </header><div class="body"><div class="empty">
+      <h3>Nothing under this address in mainline</h3>
+      <p>Which is not the same as nothing landed: a patch applied by a
+      maintainer keeps the author line it was posted with, so a different
+      address on the Signed-off-by would be counted there and not
+      here.</p></div></div></div>`;
+  }
+  return grid("findmerged", a.merged, [
+    { key: "short", label: "Commit", cls: "mono nowrap", csv: (r) => r.short,
+      render: (r) => `<a href="${esc(r.url)}" target="_blank"
+        rel="noreferrer">${mark(r.short)}</a>` },
+    { key: "subject", label: "Subject", cls: "subject", width: "50%",
+      csv: (r) => r.subject, render: (r) => mark(r.subject) },
+    { key: "tag", label: "Released in", sortable: true,
+      csv: (r) => r.tag,
+      render: (r) => r.tag
+        ? `<span class="pill ${r.shipped ? "green" : "cyan"}"
+             title="${r.shipped ? "shipped in this release"
+                                : "merged since the last release, so this is "
+                                  + "the one it is due in"}">${esc(r.tag)}${
+             r.shipped ? "" : " (due)"}</span>`
+        : `<span class="muted">\u2014</span>` },
+    { key: "date", label: "Merged",
+      render: (r) => `<span class="nowrap muted">${esc(r.date)}</span>` },
+  ], {
+    title: "In Linus' tree",
+    subtitle: a.more.merged
+      ? "the " + a.merged.length + " most recent; there are more"
+      : a.merged.length + " commits",
+    placeholder: "Search a commit or a subject\u2026",
+    searchIn: (r) => [r.subject, r.short, r.tag].join(" "),
+    rowKey: (r) => r.commit,
+    sort: "date", dir: "desc", per: 15,
+  });
+}
+
+function queuedPanel(a) {
+  if (!a.sources.git || !a.in_next.length) return "";
+  return `<div class="panel wide" data-reveal>
+    <header><h2>Waiting in linux-next</h2><div class="spacer"></div>
+      <span class="pill cyan">${a.counts.in_next}</span></header>
+    <div class="body">
+      <p class="hint" style="margin-top:0">Queued for a merge window and not
+      in mainline yet.</p>
+      <ul class="asklist plain">${a.in_next.map((c) =>
+        `<li><a href="${esc(c.url)}" target="_blank" rel="noreferrer"
+           class="mono">${esc(c.short)}</a> ${esc(c.subject)}
+           <span class="muted">${esc(c.date)}</span></li>`).join("")}</ul>
+    </div></div>`;
+}
+
+function treeSweep(a, deep) {
+  /* The sweep works out what is waiting by subtracting what is already in
+     mainline, so without mainline there is nothing it could honestly say. */
+  if (!a.sources.git) return "";
+  const body = () => {
+    if (deep.state === "running") {
+      const done = deep.done || 0, total = deep.total || 80;
+      return `<p class="hint" style="margin-top:0">Asking each maintainer
+        tree in turn. git.kernel.org takes its time over an author search,
+        so this runs behind the page &mdash; the rest of it still works.</p>
+        <div class="prog"><div class="fill" style="width:${
+          pct(done, total)}"></div></div>
+        <p class="hint">${done} of ${total} trees</p>`;
+    }
+    if (deep.state === "done") {
+      if (!deep.trees.length) {
+        return `<p class="hint" style="margin-top:0">Nothing of theirs is
+          sitting in a maintainer tree right now. Anything taken has already
+          moved on to linux-next or to mainline.</p>`;
+      }
+      return `<p class="hint" style="margin-top:0">Taken by a maintainer and
+        not yet in mainline. Checked ${esc(ago(deep.at))}.</p>`
+        + `<table class="plain"><thead><tr><th>Tree</th><th>Waiting</th>
+           <th>Also in next</th><th>Newest</th></tr></thead><tbody>`
+        + deep.trees.map((t) => `<tr class="main">
+            <td><span class="pill blue">${esc(t.tree)}</span></td>
+            <td>${t.count}</td><td class="muted">${t.in_next}</td>
+            <td class="muted nowrap">${esc(t.newest)}</td></tr>
+            <tr class="sub"><td colspan="4"><div class="sub2">${
+              t.commits.slice(0, 4).map((c) =>
+                `<a href="${esc(c.url)}" target="_blank" rel="noreferrer"
+                   class="mono">${esc(c.short)}</a> ${esc(c.subject)}`)
+                .join("<br>")}</div></td></tr>`).join("")
+        + `</tbody></table>`;
+    }
+    return `<p class="hint" style="margin-top:0">There are ${
+      deep.total || 80} maintainer trees on git.kernel.org. Asking each one
+      whether it is holding their work takes a few minutes, so it is not
+      done unless you ask for it. The answer is kept for six hours and
+      shared, so the next person to look costs nothing.</p>
+      <div class="btnrow"><button class="btn" ${act(findDeep)}>Check the
+      maintainer trees</button></div>`;
+  };
+  return `<div class="panel wide" data-reveal>
+    <header><h2>In a maintainer tree</h2><div class="spacer"></div>
+      ${deep.state === "done"
+        ? `<span class="pill blue">${deep.count}</span>` : ""}
+    </header><div class="body">${body()}</div></div>`;
+}
+
+/* ------------------------------------------------------ who to send to */
+
+async function findSend() {
+  const q = (S.find.mq || "").trim();
+  if (!q) { toast("Type a file path or a subsystem first.", "bad"); return; }
+  S.find.mbusy = true;
+  S.find.merror = "";
+  render();
+  const r = await fetch("/api/discover/maintainers?q=" + encodeURIComponent(q),
+                        { cache: "no-store" });
+  const out = await r.json().catch(() => ({}));
+  S.find.mbusy = false;
+  if (!out.ok) {
+    S.find.maint = null;
+    S.find.merror = out.error || "That lookup did not work.";
+  } else {
+    S.find.maint = out;
+  }
+  render();
+}
+
+function findSendView() {
+  const f = S.find;
+  const head = searchRow("mq", findSend, f.mq,
+                         "drivers/gpu/drm/amd/  or  net/ipv4/tcp.c  or  btrfs",
+                         f.mbusy, "Find them");
+  const blurb = `<p class="hint" style="margin:0 0 14px">Read straight out of
+    MAINTAINERS in mainline, by the same rules
+    <code>scripts/get_maintainer.pl</code> uses. A path out of a diff works
+    as it is, <code>a/</code> and all.</p>`;
+
+  if (f.merror) {
+    return head + blurb + `<div class="panel wide"><div class="body">
+      <div class="empty"><h3>${esc(f.merror)}</h3></div></div></div>`;
+  }
+  if (!f.maint) {
+    return head + blurb + `<div class="panel wide"><div class="body">
+      <div class="empty tall">
+        <h3>Who should receive this patch?</h3>
+        <p>Give it a file you changed and it names the maintainers to
+        address, the reviewers and lists to copy, whether anybody is
+        actually looking after that corner, and which tree it goes
+        through.</p>
+      </div></div></div>`;
+  }
+  return head + sendResult(f.maint);
+}
+
+function addrLine(list) {
+  return list.map((p) => p.name ? `${p.name} <${p.email}>` : p.email)
+             .join(", ");
+}
+
+function people(list, kind) {
+  if (!list.length) return "";
+  return `<div class="sendbox">
+    <div class="sendhead"><b>${esc(kind)}</b>
+      <button class="link" ${act(copyText, addrLine(list))}>copy</button></div>
+    <ul class="asklist plain">${list.map((p) => `<li>${
+      p.list ? `<span class="pill grey">list</span> ` : ""}${
+      p.name ? `<b>${esc(p.name)}</b> ` : ""}<span class="mono">${
+      esc(p.email)}</span>${p.note
+        ? ` <span class="tag">${esc(p.note)}</span>` : ""}</li>`).join("")}</ul>
+  </div>`;
+}
+
+function sendResult(m) {
+  if (!m.sections.length) {
+    return `<div class="panel wide"><div class="body"><div class="empty">
+      <h3>Nothing in MAINTAINERS claims that</h3>
+      <p>${m.path ? `No section lists <code>${esc(m.path)}</code>.`
+                  : `No subsystem is named after "${esc(m.query)}".`}
+      Try a directory above it, or a word from the subsystem's
+      title.</p></div></div></div>`;
+  }
+  const send = m.send;
+  const head = `<div class="panel wide" data-reveal>
+    <header><h2>Send it to</h2><div class="spacer"></div>
+      <button class="btn sm" ${act(copyText,
+        "To: " + addrLine(send.to) + "\nCc: " + addrLine(send.cc))}>Copy
+        both</button></header>
+    <div class="body">
+      <p class="hint" style="margin-top:0">${m.path
+        ? `For <code>${esc(m.path)}</code>.`
+        : `For anything under "${esc(m.query)}".`} Maintainers are
+        addressed, reviewers and lists are copied.</p>
+      ${people(send.to, "To")}${people(send.cc, "Cc")}
+    </div></div>`;
+
+  const sections = m.sections.map((s, i) => `
+    <div class="panel wide" data-reveal style="--i:${i + 1}">
+      <header><h2>${esc(s.name)}</h2><div class="spacer"></div>
+        ${s.status ? `<span class="pill ${
+          /Supported|Maintained/i.test(s.status) ? "green"
+            : /Orphan|Obsolete/i.test(s.status) ? "red" : "amber"
+          }" title="${esc(s.status_means)}">${esc(s.status)}</span>` : ""}
+        ${s.catchall ? `<span class="pill grey">catch-all</span>` : ""}
+      </header><div class="body">
+        <p class="hint" style="margin-top:0">${s.catchall
+          ? "The fallback for the whole tree, which is why its list belongs "
+            + "on the Cc and its name does not belong on the To."
+          : `Matched on <code>${esc(s.why)}</code>.`}${
+          s.status_means ? " " + esc(s.status_means) + "." : ""}</p>
+        ${people(s.maintainers, "Maintainers")}
+        ${people(s.reviewers, "Reviewers")}
+        ${s.lists.length ? `<p class="hint">Lists: ${
+          s.lists.map((l) => `<span class="mono">${esc(l)}</span>`).join(", ")
+        }</p>` : ""}
+        ${s.trees.length ? `<p class="hint">Tree: <span class="mono">${
+          esc(s.trees[0])}</span></p>` : ""}
+        ${s.files.length ? `<p class="hint">Files: ${s.files.map((x) =>
+          `<code>${esc(x)}</code>`).join(" ")}</p>` : ""}
+      </div></div>`).join("");
+
+  return head + sections;
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(
+    () => toast("Copied.", "ok"),
+    () => toast("This browser would not let the page copy that.", "bad"));
+}
+
+/* --------------------------------------------------------- your picture */
+
+/* The browser does the shrinking.  A phone camera gives four megabytes and a
+   26 pixel circle needs none of it, so the file is drawn into a 256 pixel
+   square and what leaves this page is the few tens of kilobytes that
+   survive.  Read as a data URL rather than an object URL because this page's
+   content policy allows data: images and does not allow blob:. */
+const AVATAR_PX = 256;
+
+function shrinkPicture(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("That file could not be read."));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That is not a picture we can read."));
+      img.onload = () => {
+        /* The middle square of whatever shape they gave us, because a face
+           in a circle should not be a squashed face in a circle. */
+        const side = Math.min(img.width, img.height);
+        if (!side) { reject(new Error("That picture is empty.")); return; }
+        const c = document.createElement("canvas");
+        c.width = c.height = AVATAR_PX;
+        const g = c.getContext("2d");
+        g.imageSmoothingQuality = "high";
+        g.drawImage(img, (img.width - side) / 2, (img.height - side) / 2,
+                    side, side, 0, 0, AVATAR_PX, AVATAR_PX);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+function choosePicture() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp";
+    input.addEventListener("change",
+      () => resolve((input.files || [])[0] || null));
+    input.click();
+  });
+}
+
+async function changePicture() {
+  const file = await choosePicture();
+  if (!file) return;
+  let url;
+  try {
+    url = await shrinkPicture(file);
+  } catch (e) {
+    toast(e.message, "bad");
+    return;
+  }
+  await putPicture(url, "Profile picture set.");
+}
+
+async function removePicture() {
+  await putPicture("", "Profile picture removed.");
+}
+
+async function putPicture(url, said) {
+  const r = await post("/api/avatar", { image: url });
+  const body = await r.json();
+  if (!body.ok) {
+    toast(body.error || "That picture was not accepted.", "bad");
+    return;
+  }
+  S.status.account = Object.assign({}, S.status.account || {},
+                                   { avatar: body.avatar });
+  toast(said, "ok");
+  showWho("");
+  render();
+}
+
+/* Their face if they gave us one, their initial if they did not.  The tag in
+   the URL is the picture's own fingerprint, so replacing it asks for a
+   different address and no stale one is left showing. */
+function avatarFace(acc, label) {
+  const tag = (acc || {}).avatar;
+  return tag
+    ? `<img src="/api/avatar?v=${encodeURIComponent(tag)}" alt="">`
+    : esc(((label || "?")[0] || "?").toUpperCase());
+}
+
 /* The account, reached from the menu in the corner rather than the sidebar,
    because it is about you rather than about your patches. */
 function viewProfile() {
@@ -1435,10 +1912,21 @@ function viewProfile() {
   return `<div class="row2" style="align-items:start">
     <div class="panel" data-reveal><header><h2>You</h2></header><div class="body">
       <div class="profilehead">
-        <span class="avatar big">${esc((called[0] || "?").toUpperCase())}</span>
+        <button class="avatar big shot" ${act(changePicture)}
+                title="${acc.avatar ? "Choose a different picture"
+                                    : "Add a picture"}">
+          ${avatarFace(acc, called)}<span class="shotlb">Change</span>
+        </button>
         <div>
           <h3>${esc(called)}</h3>
           <p class="hint" style="margin:2px 0 0">${esc(who)}</p>
+          <p class="hint" style="margin:6px 0 0">
+            <button class="link" ${act(changePicture)}>${
+              acc.avatar ? "Replace picture" : "Add a picture"}</button>${
+            acc.avatar
+              ? ` &middot; <button class="link" ${act(removePicture)}>Remove</button>`
+              : ""}
+          </p>
         </div>
       </div>
       <dl class="kv">
@@ -2014,7 +2502,9 @@ function until(iso) {
 }
 
 function navCounts() {
-  const d = S.data, k = d.kpis;
+  const d = S.data;
+  if (!d) return {};
+  const k = d.kpis;
   const owed = owedWork();
   return {
     owed: owed.replies.threads.length + owed.respin.series.length,
@@ -2027,7 +2517,8 @@ function navCounts() {
 function renderNav() {
   const counts = navCounts();
   $("nav").innerHTML = NAV.map(([id, label, icon], i) => `
-    <button class="navitem ${S.view === id ? "active" : ""}" ${act(go, id)}>
+    <button class="navitem ${S.view === id ? "active" : ""} ${
+      !S.data && NO_DATA_NEEDED[id] ? "ready" : ""}" ${act(go, id)}>
       <span class="ico">${icon}</span><span class="lb">${esc(label)}</span>
       ${counts[id] !== undefined ? `<span class="count">${counts[id]}</span>`
         : `<span class="kbd">${i + 1}</span>`}
@@ -2041,6 +2532,8 @@ const VIEWS = {
   outcomes:    ["Outcomes", "what landed and what did not", viewOutcomes],
   discussions: ["Discussions", "threads, people and review tags", viewDiscussions],
   insights:    ["Insights", "activity, subsystems and trees", viewInsights],
+  discover:    ["Discover", "anybody else's patches, and who to send yours to",
+                viewDiscover],
   settings:    ["Settings", "refresh, assistant and sources", viewSettings],
   profile:     ["Profile", "your account and what this server keeps", viewProfile],
 };
@@ -2092,9 +2585,15 @@ function toggleWhoMenu(want) {
   $("whobtn").setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+/* The one view that is not about the person looking at it, and so is the
+   one view that works before their first collection has finished -- or when
+   it has failed, which is when being able to reach something is worth the
+   most. */
+const NO_DATA_NEEDED = { discover: true };
+
 /* keepFocus: the id of a grid whose search box should keep the caret. */
 function render(keepFocus) {
-  if (!S.data) return;
+  if (!S.data && !NO_DATA_NEEDED[S.view]) return;
   const [title, sub, fn] = VIEWS[S.view] || VIEWS.overview;
   $("viewtitle").textContent = title;
   $("viewsub").textContent = sub;
@@ -2220,7 +2719,7 @@ function showWho(email) {
   const label = acc.first || acc.username || who;
   $("userlabel").textContent = label;
   $("userlabel").parentElement.title = who || "Account";
-  $("avatar").textContent = (label[0] || "?").toUpperCase();
+  $("avatar").innerHTML = avatarFace(acc, label);
 }
 
 /* ------------------------------------------------------------------ data */
@@ -2313,6 +2812,11 @@ function firstRun(who, collecting, progress) {
       </p>
       <p class="muted" id="firstwait">This page opens by itself when it is
       ready, so there is nothing to do but wait.</p>
+      <div class="btnrow" style="justify-content:center">
+        <button class="btn" ${act(go, "discover")}>Try Discover meanwhile</button>
+      </div>
+      <p class="hint">Discover reads the public archives rather than your
+      collection, so it works already.</p>
     </div>
   </div></div>`;
   drawProgress(progress);
@@ -2494,8 +2998,8 @@ async function applyInterval() {
 
 /* ------------------------------------------------------------------ boot */
 
-function toggleTheme() {
-  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+function setTheme(next) {
+  if (document.documentElement.dataset.theme === next) return;
   transition(() => {
     document.documentElement.dataset.theme = next;
     /* Locally so the next paint on this machine has it before the server
@@ -2504,6 +3008,10 @@ function toggleTheme() {
     render();
   });
   post("/api/prefs", { theme: next }).catch(() => {});
+}
+
+function toggleTheme() {
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 }
 
 function keys(e) {
@@ -2523,7 +3031,16 @@ function keys(e) {
   else if (e.key === "r") { e.preventDefault(); doRefresh(false); }
   else if (e.key === "t") { toggleTheme(); }
   else if (e.key === "?") { $("help").classList.toggle("on"); }
-  else if (/^[1-7]$/.test(e.key)) { go(NAV[+e.key - 1][0]); }
+  else if (e.key === "g") {
+    e.preventDefault();
+    go("discover");
+    /* Straight into the box: pressing g to look somebody up and then having
+       to reach for the mouse is half a shortcut. */
+    setTimeout(() => {
+      const box = document.querySelector("input[data-find]");
+      if (box) box.focus();
+    }, 60);
+  } else if (/^[1-7]$/.test(e.key)) { go(NAV[+e.key - 1][0]); }
 }
 
 async function boot() {
@@ -2545,8 +3062,9 @@ async function boot() {
   $("aisend").addEventListener("click", sendAI);
   $("helpopen").addEventListener("click", () => $("help").classList.add("on"));
   $("helpclose").addEventListener("click", () => $("help").classList.remove("on"));
-  /* The corner menu: Profile and Sign out, rather than a sign-out button
-     sitting one stray click away from ending the session. */
+  /* The corner menu: everything about you rather than about your patches,
+     which is why Settings moved here off the sidebar. Sign out lives behind
+     it too, rather than one stray click away from ending the session. */
   $("whobtn").addEventListener("click", (e) => {
     e.stopPropagation();
     toggleWhoMenu();
@@ -2556,10 +3074,21 @@ async function boot() {
     if (!b) return;
     toggleWhoMenu(false);
     if (b.dataset.who === "signout") signOut();
-    else go("profile");
+    else go(b.dataset.who);
   });
   /* A menu that will not close is worse than no menu. */
   document.addEventListener("click", () => toggleWhoMenu(false));
+  /* Enter in a Discover search box means search, because pressing it and
+     having nothing happen is what every search box has taught people not to
+     expect. */
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const box = e.target.closest && e.target.closest("input[data-find]");
+    if (!box) return;
+    e.preventDefault();
+    S.find[box.dataset.find] = box.value;
+    (box.dataset.find === "q" ? findGo : findSend)();
+  });
   $("aiinput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAI(); }
   });

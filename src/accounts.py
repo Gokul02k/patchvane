@@ -391,6 +391,102 @@ def set_password(email: str, password: str) -> bool:
     return save(rec)
 
 
+# ------------------------------------------------------------- the picture
+
+# A quarter of a megabyte is far more than a 256 pixel square needs, and
+# still small enough that a POST of one cannot be used to fill a disk.  The
+# browser shrinks the picture before it sends it, so anything approaching
+# this limit did not come from our own page.
+AVATAR_MAX = 256 * 1024
+
+# Sniffed from the bytes rather than believed from the Content-Type, because
+# the type is whatever the sender typed and the bytes are what a browser will
+# actually render.  Only the three formats every browser has always had: SVG
+# is deliberately absent, being a document that can carry script.
+MAGIC = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"RIFF", "image/webp"),            # checked further below
+)
+
+
+def image_kind(raw: bytes) -> str:
+    """The MIME type of a picture we are willing to store, or "" for no."""
+    if not raw or len(raw) > AVATAR_MAX:
+        return ""
+    for sig, mime in MAGIC:
+        if raw.startswith(sig):
+            if mime == "image/webp" and raw[8:12] != b"WEBP":
+                return ""
+            return mime
+    return ""
+
+
+def avatar_path(email: str) -> str:
+    return os.path.join(home_of(email), "avatar.bin")
+
+
+def set_avatar(email: str, raw: bytes) -> str:
+    """Keep a picture for somebody.  Returns a tag naming this exact one.
+
+    The tag goes in the URL the page asks for, so a replaced picture is a
+    different address and no cache anywhere has to be talked out of the old
+    one."""
+    rec = load(email)
+    mime = image_kind(raw)
+    if not rec or not mime:
+        return ""
+    path = avatar_path(email)
+    tmp = path + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return ""
+    tag = hashlib.sha256(raw).hexdigest()[:12]
+    rec["avatar"] = tag
+    rec["avatar_type"] = mime
+    rec["avatar_set"] = now_iso()
+    return tag if save(rec) else ""
+
+
+def clear_avatar(email: str) -> bool:
+    rec = load(email)
+    if not rec:
+        return False
+    try:
+        os.unlink(avatar_path(email))
+    except OSError:
+        pass
+    for key in ("avatar", "avatar_type", "avatar_set"):
+        rec.pop(key, None)
+    return save(rec)
+
+
+def read_avatar(email: str) -> tuple:
+    """(bytes, mime type).  Empty when they have not set one."""
+    rec = load(email)
+    if not rec.get("avatar"):
+        return b"", ""
+    try:
+        with open(avatar_path(email), "rb") as fh:
+            raw = fh.read(AVATAR_MAX + 1)
+    except OSError:
+        return b"", ""
+    # Sniffed again on the way out.  The file is ours, but serving bytes we
+    # have not looked at as an image is how a directory full of pictures
+    # becomes a way to serve anything at all.
+    mime = image_kind(raw)
+    return (raw, mime) if mime else (b"", "")
+
+
 def sign_in(who: str, password: str) -> tuple:
     """(account, why not).  One message for both halves being wrong, because
     a different one for "no such user" is a way to ask this server which
@@ -418,7 +514,11 @@ def display(rec: dict) -> dict:
             "name": " ".join(filter(None, [rec.get("first", ""),
                                            rec.get("last", "")])),
             "gender": rec.get("gender", "private"),
-            "since": rec.get("created", "")}
+            "since": rec.get("created", ""),
+            # The tag, not the picture: the page asks for the bytes at a URL
+            # that carries this, so a 30KB photograph is not in every poll of
+            # the status endpoint.
+            "avatar": rec.get("avatar", "")}
 
 
 # ------------------------------------------------------- codes, in memory
