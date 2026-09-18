@@ -128,10 +128,17 @@
     });
 
   /* Put a refusal from the server where it belongs: under its own box when
-     it named one, at the top of the card when it did not. */
+     it named one, at the top of the card when it did not.
+
+     The box also has to be on the step being shown.  Every step is in the
+     page at once and the hidden ones still have their slots, so a field name
+     that belongs to another step would write the reason somewhere real and
+     invisible -- and a button that has just been refused would look as
+     though it had done nothing at all. */
   function landed(out) {
+    var slot = out.field ? $("e-" + out.field) : null;
     if (!out.error) return true;
-    if (out.field && $("e-" + out.field)) {
+    if (slot && slot.closest(".step") === $("step-" + S.step)) {
       bad(out.field, out.error);
       var box = $(out.field);
       if (box) box.focus();
@@ -212,14 +219,44 @@
     symbol: "Add a symbol, like ! ? @ # or -.",
   };
 
-  function pwProblem(p) {
+  /* The server refuses two more things than the list on screen describes: a
+     password holding the username, and one holding the address.  Neither can
+     be a tick in that list, because both are about something typed on an
+     earlier step rather than about the password on its own -- so they are
+     checked here, at the moment the button is pressed, and said in the same
+     words the server would use.
+
+     The list of passwords everybody guesses stays on the server.  Mirroring
+     it here would mean shipping it to every visitor and keeping two copies
+     in step, and a refusal from it now shows up properly anyway. */
+  function pwProblem(p, who) {
     if (p !== p.trim()) return "It cannot start or end with a space.";
     var names = Object.keys(RULES);
     for (var i = 0; i < names.length; i++) {
       if (!RULES[names[i]](p)) return SAYS[names[i]];
     }
     if (p.length > 128) return "That is longer than 128 characters.";
+    var low = p.toLowerCase();
+    var user = ((who || {}).username || "").toLowerCase();
+    var local = ((who || {}).email || "").split("@")[0].toLowerCase();
+    if (user.length > 2 && low.indexOf(user) >= 0) {
+      return "It should not contain your username.";
+    }
+    if (local.length > 2 && low.indexOf(local) >= 0) {
+      return "It should not contain your email address.";
+    }
     return "";
+  }
+
+  /* What they typed on the way to this step, for the two checks above.
+     Resetting a password never asked for a username, so that one is left
+     empty and the server remains the one that knows. */
+  function pwContext() {
+    var making = S.kind === "signup";
+    return {
+      username: making ? $("username").value.trim() : "",
+      email: (making ? $("email").value : $("fmail").value).trim(),
+    };
   }
 
   function strength(p) {
@@ -503,7 +540,7 @@
     clearAll();
     var pw = $("pw1").value;
     var again = $("pw2").value;
-    var why = pwProblem(pw);
+    var why = pwProblem(pw, pwContext());
     if (why) return bad("pw1", why);
     if (pw !== again) return bad("pw2", "Those two do not match.");
 
@@ -513,6 +550,10 @@
       .then(function (out) {
         busy($("go-password"), false);
         if (out.error) {
+          /* The server names the keys it was sent; this step calls the same
+             two boxes pw1 and pw2. */
+          if (out.field === "password") out.field = "pw1";
+          if (out.field === "confirm") out.field = "pw2";
           if (out.field === "username") {
             /* Somebody else finished with that name while this one was
                reading their inbox.  Back to the form, with it said. */
