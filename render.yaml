@@ -44,11 +44,14 @@ services:
       # https://patchvane.onrender.com -- no trailing slash.
       - key: PATCHVANE_URL
         sync: false
-      # Whoever runs this. Reports written on Settings > Support are kept in
-      # the data repository either way; this address is the one that gets a
-      # Feedback tab to read and answer them, and the one they are mailed
-      # to. Without it the reports are still kept, but nobody can read them
-      # from inside the site.
+      # Whoever runs this: the one account that gets a Feedback section in
+      # the sidebar, to read and answer what people wrote on Settings >
+      # Support, and the address those reports are mailed to.
+      #
+      # Optional. Left unset, the owner is whoever signs in here first,
+      # which is the person deploying it -- so this is for a deployment
+      # where somebody else might get there first, or where the owner's
+      # address is not the one they sign in with.
       - key: PATCHVANE_OWNER
         sync: false
       # Settings > Support. Optional: a report is written down whether or

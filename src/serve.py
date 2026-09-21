@@ -104,7 +104,6 @@ SECRETS = os.path.join(DATA_DIR, "secrets.json")
 # who uses this.
 PEOPLE = os.path.join(DATA_DIR, "people")
 accounts.configure(PEOPLE)
-feedback.configure(DATA_DIR)
 
 APP = CONFIG.get("app_name", "Patchvane")
 
@@ -174,6 +173,72 @@ def known_people() -> list:
             continue
     out.sort(key=lambda b: b.get("seen") or "", reverse=True)
     return out
+
+
+# Where the answer below is kept once it has been worked out.
+OWNER_NOTE = os.path.join(DATA_DIR, "owner.json")
+_OWNER_KNOWN = ""
+
+
+def owner_now() -> str:
+    """Whoever runs this deployment, and may therefore read what people sent.
+
+    This used to be an environment variable and nothing else, which meant
+    that on a deployment where nobody had set one -- which is every
+    deployment that was simply started -- there was no owner, so the reports
+    people wrote had nowhere to be read and the tab for reading them was
+    never drawn for anybody.  The person who set the server up, signed into
+    it, and was being written to, could not see any of it.
+
+    So: an address given on purpose still wins, because somebody who says
+    who the owner is has said it for a reason.  Failing that, it is whoever
+    got here first -- on a personal deployment that is the person who
+    started it, and there is nobody else it could be.  Either way the answer
+    is written down the first time it is reached, so that it cannot move to
+    somebody else later because an account was removed or a clock was
+    wrong."""
+    global _OWNER_KNOWN
+    said = (env("PATCHVANE_OWNER") or env("PATCHVANE_FEEDBACK_EMAIL")
+            or "").strip().lower()
+    if said:
+        return said
+    if _OWNER_KNOWN:
+        return _OWNER_KNOWN
+
+    try:
+        with open(OWNER_NOTE, encoding="utf-8") as fh:
+            kept = (json.load(fh).get("owner") or "").strip().lower()
+        if kept:
+            _OWNER_KNOWN = kept
+            return kept
+    except Exception:
+        pass
+
+    found = (CONFIG.get("owner") or CONFIG.get("email") or "").strip().lower()
+    if not found:
+        # Earliest by when they first signed in, not by when the directory
+        # was written: a collection rewrites its files every time it runs.
+        seen = [p for p in known_people() if p.get("email")]
+        seen.sort(key=lambda p: p.get("first") or p.get("seen") or "~")
+        found = (seen[0]["email"] if seen else "").strip().lower()
+    if not found:
+        return ""          # nobody has signed in yet; ask again next time
+
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = OWNER_NOTE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"owner": found, "decided": now_iso(),
+                       "how": "config" if CONFIG.get("email") or CONFIG.get("owner")
+                              else "first to sign in"}, fh, indent=1)
+        os.replace(tmp, OWNER_NOTE)
+    except OSError as exc:
+        log("could not write down who the owner is: %s" % exc)
+    _OWNER_KNOWN = found
+    return found
+
+
+feedback.configure(DATA_DIR, owner=owner_now)
 
 
 def remember_person(email: str) -> None:
@@ -2208,9 +2273,14 @@ class Handler(BaseHTTPRequestHandler):
             # to carry their message.  Along with what this person has sent
             # before and what was said back, because a report nobody can
             # follow up on is a report nobody sends twice.
+            # The count goes with it so the page can say how many reports
+            # are waiting without reading them all, and say it somewhere the
+            # owner will pass rather than only on the tab itself.
+            mine = feedback.is_owner(me)
             self.json_out(200, {"ok": True, "routes": feedback.routes(),
                                 "repo": feedback.REPO,
-                                "owner": feedback.is_owner(me),
+                                "owner": mine,
+                                "waiting": feedback.waiting() if mine else 0,
                                 "mine": feedback.mine(me)})
         elif path == "/api/feedback":
             # Everybody's reports.  One address may read these: this is

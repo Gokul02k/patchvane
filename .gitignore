@@ -25,3 +25,8 @@ secrets.json*
 _preview-*.html
 docs/images/_preview-*.png
 docs/images/_check-*.png
+
+# Reports people sent from the Support tab, and who this deployment
+# decided its owner is. Both are the deployment's, not the project's.
+feedback.json
+owner.json

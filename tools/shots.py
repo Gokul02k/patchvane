@@ -213,7 +213,9 @@ def main():
                              "twice as one, which is right, but the pill on "
                              "the row still says v1.")
         shoot(page, "shot-support.png", wait=1200, at="Tell us something")
-        tab(page, "Feedback")
+        # The owner's own section, which is in the sidebar rather than in
+        # Settings: it is work that arrives, not a setting.
+        page.click(".navitem:has-text('Feedback')")
         shoot(page, "shot-feedback.png", wait=2200)
 
         # The overview again, in the other theme.

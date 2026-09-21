@@ -76,6 +76,9 @@ means it is in their tree but has not reached linux-next yet.
 | **Discover** | Anybody else's patches, and who to send yours to |
 | **Settings** | Refresh schedule, the assistant, the sources, and support |
 
+Whoever runs the deployment has a ninth, **Feedback**, described at the end
+of this page. Nobody else has it, or can reach what is in it.
+
 Everything is reached by clicking it. There are no keyboard shortcuts to
 learn: single letters used to jump between sections and open things, which
 meant that typing into a page that had quietly lost focus did something
@@ -118,8 +121,11 @@ than seven drawn a hand apart.
 
 A series sent as v1, corrected, and sent again as v2 is two postings and one
 patch. The collection keeps both postings — the history is worth having —
-but only one of them speaks for the work: the version that landed if any
-did, and otherwise the newest one sent.
+but only one of them speaks for the work: the newest one sent. Where a
+maintainer took an earlier version and another went out afterwards, the
+landing is a fact about the patch rather than about that one posting, so it
+travels to the row that speaks: the patch reads as being in the tree, at
+the version you last sent.
 
 Every number on the site is counted over that set. Without it the page said
 423 patches where 359 had been written, filed the abandoned v1 under
@@ -262,14 +268,22 @@ the page used to tell people there was "nowhere for this to go" on a
 deployment with neither, which is a strange thing to say to somebody who has
 just found a bug.
 
-Whoever the deployment belongs to — the one address in `PATCHVANE_OWNER` —
-gets a **Feedback** tab listing everything sent, filtered by kind, status,
-page or person. Answering one sets where it stands (read, being worked on,
-done, not going to change, waiting on you) and can add a note. Both go back
-to whoever wrote it: by mail if the deployment can send mail, and on their
-own Support tab either way, so a report is never a message dropped into a
-hole.
+Whoever the deployment belongs to gets a **Feedback** section of their own
+in the sidebar, carrying the number of reports nobody has looked at yet,
+and listing everything sent, filtered by kind, status, page or person.
+Answering one sets where it stands (read, being worked on, done, not going
+to change, waiting on you) and can add a note. Both go back to whoever
+wrote it: by mail if the deployment can send mail, and on their own Support
+tab either way, so a report is never a message dropped into a hole.
 
-The tab is not the permission. The server decides who the owner is and
-checks it again on every request, so a drawn tab and a reachable endpoint
-are the same question asked twice.
+Nobody on the deployment sees that section but its owner, and nobody has to
+set anything up to be one. `PATCHVANE_OWNER` still says who it is where
+that matters — a shared host, or a deployment somebody else signed into
+first. Where it is not set, the owner is whoever signed in here first,
+which on a deployment somebody started for themselves is the only person it
+could be. The answer is written down the first time it is reached, so it
+cannot move to somebody else later.
+
+The section is not the permission. The server decides who the owner is and
+checks it again on every request, so a drawn section and a reachable
+endpoint are the same question asked twice.

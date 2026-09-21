@@ -36,14 +36,41 @@ TOKEN = (os.environ.get("PATCHVANE_GITHUB_TOKEN") or "").strip()
 API = (os.environ.get("PATCHVANE_GITHUB_API")
        or "https://api.github.com").rstrip("/")
 
-# Who ordinary feedback reaches.  Whoever runs the deployment.
-TO = (os.environ.get("PATCHVANE_FEEDBACK_EMAIL")
-      or os.environ.get("PATCHVANE_OWNER") or "").strip().lower()
+# Who may read what everybody sent and answer it, and who ordinary feedback
+# reaches.  One address, because this is somebody's deployment rather than a
+# product with a support desk.
+#
+# Asked for rather than read out of the environment here, because who that
+# is can be worked out from the deployment itself and usually has to be:
+# see owner_now() in serve.py.  An address given here explicitly still wins.
+_ASK_OWNER = None
 
-# Who may read what everybody sent and answer it.  One address, because
-# this is somebody's deployment rather than a product with a support desk.
-OWNER = (os.environ.get("PATCHVANE_OWNER")
-         or os.environ.get("PATCHVANE_FEEDBACK_EMAIL") or "").strip().lower()
+
+def configure(data_dir: str, owner=None) -> None:
+    """Point the book at the deployment's own storage, and say who runs it.
+
+    `owner` is either an address or something to call for one, so that a
+    server which does not yet know -- nobody has signed in on a fresh
+    deployment -- can answer later without being reconfigured."""
+    global BOOK, _ASK_OWNER
+    BOOK = os.path.join(data_dir, "feedback.json")
+    if owner is not None:
+        _ASK_OWNER = owner
+
+
+def owner() -> str:
+    if _ASK_OWNER is not None:
+        who = _ASK_OWNER() if callable(_ASK_OWNER) else _ASK_OWNER
+        if who:
+            return who.strip().lower()
+    return (os.environ.get("PATCHVANE_OWNER")
+            or os.environ.get("PATCHVANE_FEEDBACK_EMAIL") or "").strip().lower()
+
+
+def to_address() -> str:
+    """Where a report is mailed.  The owner, unless told otherwise."""
+    return ((os.environ.get("PATCHVANE_FEEDBACK_EMAIL") or "").strip().lower()
+            or owner())
 
 MAX = 8000          # characters of one report
 TITLE = 90          # characters of the first line used as an issue title
@@ -79,12 +106,6 @@ STATUSES = {
 }
 
 
-def configure(data_dir: str) -> None:
-    """Point the book at the deployment's own storage."""
-    global BOOK
-    BOOK = os.path.join(data_dir, "feedback.json")
-
-
 def _read() -> list:
     if not BOOK or not os.path.exists(BOOK):
         return []
@@ -115,7 +136,8 @@ def _write(rows: list) -> bool:
 
 
 def is_owner(email: str) -> bool:
-    return bool(OWNER) and (email or "").strip().lower() == OWNER
+    who = owner()
+    return bool(who) and (email or "").strip().lower() == who
 
 
 def record(text: str, kind: str, who: str = "", name: str = "",
@@ -153,6 +175,11 @@ def mine(email: str) -> list:
 
 def everything() -> list:
     return _read()
+
+
+def waiting() -> int:
+    """Reports nobody has looked at yet."""
+    return sum(1 for r in _read() if r.get("status") == "new")
 
 
 def answer(rid: str, status: str, note: str, by: str = "") -> dict:
@@ -219,8 +246,9 @@ def routes() -> dict:
 
     "Written down" is always one of them, so the page never has to tell
     anybody their report has nowhere to go."""
-    return {"issue": bool(REPO and TOKEN), "mail": bool(TO and mailer.ready()),
-            "owner": bool(OWNER), "kinds": KINDS, "statuses": STATUSES}
+    return {"issue": bool(REPO and TOKEN),
+            "mail": bool(to_address() and mailer.ready()),
+            "owner": bool(owner()), "kinds": KINDS, "statuses": STATUSES}
 
 
 def clean(text: str) -> str:
@@ -302,8 +330,8 @@ def as_mail(text: str, who: str = "", kind: str = "feedback", log=None) -> tuple
     """ % dict(who=mailer.esc(who or "Somebody"), body=mailer.esc(body),
                faint=mailer.FAINT, line=mailer.LINE, font=mailer.FONT)
     plain = "%s wrote:\n\n%s\n" % (who or "Somebody", body)
-    sent, why = mailer.send(TO, subject, mailer.shell(subject, inner), plain,
-                            log=log)
+    sent, why = mailer.send(to_address(), subject,
+                            mailer.shell(subject, inner), plain, log=log)
     return sent, "sent" if sent else why, ""
 
 

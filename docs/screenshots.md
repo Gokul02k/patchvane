@@ -116,10 +116,12 @@ see. Nothing here comes from anyone's dashboard.</sub>
 <details>
 <summary><b>&#128233; Feedback</b> &#8212; what everybody sent, for whoever runs the deployment</summary>
 <br>
-<img src="images/shot-feedback.png" alt="The owner's feedback tab" width="100%">
+<img src="images/shot-feedback.png" alt="The owner's feedback section" width="100%">
 <br>
-<sub>Only the address in <code>PATCHVANE_OWNER</code> gets this tab, and the
-server checks that on every request rather than trusting the page.</sub>
+<sub>A section only the owner has, carrying the number of reports nobody
+has read yet. The owner is <code>PATCHVANE_OWNER</code> where that is set
+and whoever signed in first where it is not, and the server checks it again
+on every request rather than trusting the page.</sub>
 </details>
 
 <details>

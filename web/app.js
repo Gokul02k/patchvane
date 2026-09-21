@@ -72,6 +72,22 @@ const NAV = [
   ["discover",    "Discover",    "\u2315"],
 ];
 
+/* What is in the sidebar depends on who is looking at it.  Everything
+   above is somebody's own patches; the section below is the deployment
+   itself, and only the person running it has one.
+
+   It is here rather than folded into Settings because it is not a setting.
+   Reports arrive while you are using the dashboard, they are addressed to
+   you, and they need answering -- which makes them work, like the patches
+   above, and work belongs where the eye already goes.  Being a section
+   also means the count of what is waiting is visible from every page
+   without opening anything. */
+function navList() {
+  return (S.support || {}).owner
+    ? NAV.concat([["inbox", "Feedback", "\u270E"]])
+    : NAV;
+}
+
 /* Terminal states: the patch has stopped moving, one way or another. */
 const CLOSED = ["superseded", "rejected", "not-applicable", "handled-elsewhere",
                 "deferred"];
@@ -1470,21 +1486,28 @@ function owedNotes() {
 
 function viewSettings() {
   loadSupport();
-  const tabList = [
+  return tabs("set", [
     ["general", "General", setGeneral],
     ["ai", "Assistant", setAI],
     ["sources", "Data sources", setSources],
     ["support", "Support", setSupport],
-  ];
-  /* Only for whoever runs this deployment.  The server decides that, and
-     checks it again on every request: a tab that is merely not drawn is
-     not a permission. */
-  if ((S.support || {}).owner) {
-    const waiting = (S.inbox || []).filter((r) => r.status === "new").length;
-    tabList.push(["inbox", waiting ? `Feedback (${waiting})` : "Feedback",
-                  setInbox]);
+  ]);
+}
+
+/* What everybody sent, for the one account that may read it.
+
+   Drawn only for the owner, and that is not what makes it safe: the server
+   decides who the owner is and checks it again on every request behind
+   this page, so a tab that is merely not drawn is not a permission. */
+function viewInbox() {
+  if (!(S.support || {}).owner) {
+    return `<div class="panel" data-reveal><div class="body">
+      <div class="empty"><div class="emptyicon">\u2298</div>
+      <h3>That is not yours to read</h3>
+      <p>Reports people send here go to whoever runs this deployment.</p>
+      </div></div></div>`;
   }
-  return tabs("set", tabList);
+  return setInbox();
 }
 
 /* Everything everybody sent, and the way to answer it.
@@ -1521,8 +1544,9 @@ function setInbox() {
     + grid("inbox", rows, [
       { key: "kind", label: "What", sort: (r) => r.kind,
         csv: (r) => fbKind(r.kind)[1],
-        render: (r) => `<span class="pill ${fbKind(r.kind)[3]}">${
-          fbKind(r.kind)[2]} ${esc(fbKind(r.kind)[1])}</span>` },
+        render: (r) => `<span class="pill ${fbKind(r.kind)[3]} nowrap"
+          title="${esc(fbKind(r.kind)[1])}">${fbKind(r.kind)[2]} ${
+          esc(fbKind(r.kind)[4] || fbKind(r.kind)[1])}</span>` },
       { key: "text", label: "What they said", cls: "subject", width: "40%",
         csv: (r) => r.text,
         render: (r) => `<button class="said" title="Answer this"
@@ -1571,7 +1595,7 @@ function setInbox() {
 function answerPanel(r) {
   if (!r) return "";
   const draft = S.answer || {};
-  return `<div class="panel wide" data-reveal>
+  return `<div class="panel wide answering" data-reveal>
     <header><h2>Answer ${esc(r.name || r.who)}</h2>
       <span class="sub">${esc(fbKind(r.kind)[1])} \u00b7 ${ago(r.at)}</span>
       <div class="spacer"></div>
@@ -1614,6 +1638,15 @@ function openReport(id) {
   S.inboxPick = same ? "" : id;
   S.answer = same ? {} : { status: "", note: "" };
   render();
+  /* The answer opens under the table, which on a long one is under the
+     bottom of the window: pressing Answer looked like it had done nothing
+     except change the button to Close. */
+  if (!same) {
+    requestAnimationFrame(() => {
+      const panel = document.querySelector(".answering");
+      if (panel) panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
 }
 
 function pickStatus(k) {
@@ -1638,9 +1671,14 @@ async function sendAnswer(id) {
       S.answer = Object.assign({}, S.answer,
                                { busy: false, error: body.error || "No." });
     } else {
-      S.answer = { status: "", note: "", done: body.told
-        ? "Sent, and they have been mailed."
-        : "Saved. They will see it on their Support tab." };
+      /* Said as a toast rather than in the panel, because sending an
+         answer closes the panel: the line about where it went was being
+         written into something that had just been taken off the screen,
+         so the whole thing simply vanished and left nobody any the wiser
+         about whether the person had been told. */
+      toast(body.told ? "Answered, and they have been mailed."
+                      : "Answered. They will see it on their Support tab.");
+      S.answer = {};
       S.inboxPick = "";
       S.inboxAsked = false;
       loadInbox();
@@ -1755,6 +1793,13 @@ function setGeneral() {
         <dt>Data collected</dt><dd>${esc(new Date(d.generated).toLocaleString())}
           <span class="muted">(${ago(d.generated)})</span></dd>
         <dt>Collection took</dt><dd>${esc(d.collect_seconds)} seconds</dd>
+        ${(S.support || {}).owner ? `<dt>This deployment</dt>
+          <dd>Yours. ${info("own", `Reports anybody sends from the Support
+            tab arrive in <b>Feedback</b>, in the sidebar, and you are the
+            only account that can read or answer them. Whoever set this
+            server up is its owner: either the address in
+            <code>PATCHVANE_OWNER</code>, or, if nobody said, the first
+            account to sign in here.`)}</dd>` : ""}
       </dl>
       <div class="field">
         <label>Appearance</label>
@@ -1877,12 +1922,17 @@ function helpOpen(id) {
    able to see the broken ones first. Asked after the writing, not before:
    being made to classify something before describing it is how a feature
    request ends up filed as a bug. */
+/* The long label is the one put to somebody choosing between them, where
+   the whole sentence is the point.  The short one is for the table the
+   owner reads afterwards, where a column of sentences is a column wide
+   enough to push what people actually wrote into four words a line. */
 const FEEDBACK_KINDS = [
-  ["bug", "Something is broken", "\u26A0", "red"],
-  ["wrong", "A number or status looks wrong", "\u2260", "amber"],
-  ["idea", "Something could be better", "\u2726", "purple"],
-  ["question", "I could not work out how to do something", "?", "blue"],
-  ["praise", "Something to say", "\u2661", "green"],
+  ["bug", "Something is broken", "\u26A0", "red", "Broken"],
+  ["wrong", "A number or status looks wrong", "\u2260", "amber", "Wrong"],
+  ["idea", "Something could be better", "\u2726", "purple", "Idea"],
+  ["question", "I could not work out how to do something", "?", "blue",
+   "Question"],
+  ["praise", "Something to say", "\u2661", "green", "Praise"],
 ];
 
 const FEEDBACK_STATUS = {
@@ -1898,7 +1948,7 @@ const FEEDBACK_STATUS = {
 function fbStatus(k) { return FEEDBACK_STATUS[k] || [k || "unknown", "grey"]; }
 
 function fbKind(k) {
-  return FEEDBACK_KINDS.find((x) => x[0] === k) || [k, k, "\u2022", "grey"];
+  return FEEDBACK_KINDS.find((x) => x[0] === k) || [k, k, "\u2022", "grey", k];
 }
 
 function feedbackPanel() {
@@ -2063,7 +2113,8 @@ async function loadSupport() {
     const body = await r.json();
     S.support = Object.assign({}, S.support,
                               { routes: body.routes || {}, repo: body.repo,
-                                owner: !!body.owner, mine: body.mine || [] });
+                                owner: !!body.owner, mine: body.mine || [],
+                                waiting: body.waiting || 0 });
     render();
   } catch (e) { /* the help still works */ }
 }
@@ -3855,15 +3906,26 @@ function until(iso) {
 }
 
 function navCounts() {
+  /* Reports are counted whether or not any patches have been collected:
+     the inbox is about the deployment, not about the collection, and on a
+     server where the first collection is still running it is the only
+     section with anything in it. */
+  /* Once the reports themselves are on the page they are what the count is
+     read from, so answering one puts the badge down straight away rather
+     than at the next reload. */
+  const waiting = S.inboxAsked
+    ? (S.inbox || []).filter((r) => r.status === "new").length
+    : ((S.support || {}).waiting || 0);
+  const own = waiting ? { inbox: waiting } : {};
   const d = S.data;
-  if (!d) return {};
+  if (!d) return own;
   const owed = owedWork();
-  return {
+  return Object.assign(own, {
     owed: owed.replies.threads.length + owed.respin.series.length,
     patches: work().length,
     outcomes: d.merged.length + owed.dropped.length,
     discussions: conversations().length,
-  };
+  });
 }
 
 function renderNav() {
@@ -3876,7 +3938,7 @@ function renderNav() {
     nav.innerHTML = `<span class="navglow" aria-hidden="true"></span>
       <div class="navlist"></div>`;
   }
-  nav.querySelector(".navlist").innerHTML = NAV.map(([id, label, icon]) => `
+  nav.querySelector(".navlist").innerHTML = navList().map(([id, label, icon]) => `
     <button class="navitem ${S.view === id ? "active" : ""} ${
       !S.data && NO_DATA_NEEDED[id] ? "ready" : ""}" ${act(go, id)}>
       <span class="ico">${icon}</span><span class="lb">${esc(label)}</span>
@@ -3912,6 +3974,8 @@ const VIEWS = {
   insights:    ["Insights", "activity, subsystems and trees", viewInsights],
   discover:    ["Discover", "anybody else's patches, and who to send yours to",
                 viewDiscover],
+  inbox:       ["Feedback", "what people sent you, and what you said back",
+                viewInbox],
   settings:    ["Settings", "refresh, assistant and sources", viewSettings],
   profile:     ["Profile", "your account and what this server keeps", viewProfile],
 };
@@ -4103,7 +4167,9 @@ function toggleWhoMenu(want) {
    one view that works before their first collection has finished -- or when
    it has failed, which is when being able to reach something is worth the
    most. */
-const NO_DATA_NEEDED = { discover: true };
+/* Sections that are about something other than the collection, and so have
+   something to show before the first one has finished. */
+const NO_DATA_NEEDED = { discover: true, inbox: true };
 
 /* keepFocus: the id of a grid whose search box should keep the caret. */
 function render(keepFocus) {
@@ -4644,6 +4710,11 @@ async function boot() {
 
   await pollStatus();
   if (!S.offline) await loadProviders();
+  /* Asked at the start rather than when the Settings page is opened,
+     because whether this account runs the deployment decides whether there
+     is a section in the sidebar at all, and a section that appears only
+     after you have been somewhere else is a section nobody finds. */
+  if (!S.offline) loadSupport();
 
   /* Put the last known page up straight away, before asking for a fresh
      one, so signing in lands on the dashboard rather than on a spinner. */
