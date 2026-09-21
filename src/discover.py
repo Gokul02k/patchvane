@@ -156,6 +156,49 @@ def pw_count(email: str, state: str = "") -> int:
     return out["n"] if out else -1
 
 
+def pw_list(email: str, state: str = "", limit: int = 60) -> dict:
+    """The patches themselves, not just how many.
+
+    Two of the five numbers on an author's page -- what they sent and what
+    was taken -- used to be numbers and nothing else, which is a strange
+    place to stop: the tree lists underneath name every commit. Patchwork
+    answers with the record for each patch, so name them too."""
+    url = ("%s/api/1.2/patches/?submitter=%s&per_page=%d&archive=both"
+           "&order=-date" % (PATCHWORK, urllib.parse.quote(email),
+                             min(limit, 100)))
+    if state:
+        url += "&state=" + urllib.parse.quote(state)
+
+    def ask():
+        body = fetch(url, timeout=45)
+        if body is None:
+            return None
+        try:
+            rows = json.loads(body)
+        except ValueError:
+            return None
+        if not isinstance(rows, list):
+            return None
+        out = []
+        for r in rows:
+            project = r.get("project") or {}
+            out.append({
+                "subject": r.get("name") or "",
+                "date": (r.get("date") or "")[:10],
+                "state": r.get("state") or "",
+                "project": project.get("name") or "",
+                "list": (project.get("list_id") or "").split(".")[0],
+                "url": r.get("web_url") or "",
+                # A patch patchwork already ties to a commit can open here
+                # rather than on patchwork, like everything else.
+                "commit": (r.get("commit_ref") or "").strip().lower(),
+            })
+        return {"rows": out}
+
+    got = cached("pwlist %s %s" % (email, state), TTL_COUNTS, ask)
+    return {"rows": (got or {}).get("rows", []), "ok": got is not None}
+
+
 # ------------------------------------------------------------------ cgit
 
 
@@ -585,6 +628,39 @@ MERGED_NOTICE = re.compile(
     re.S)
 
 
+#: What a diff is allowed to weigh before it is cut short.  A tree-wide
+#: rename runs to megabytes, and nobody reads that in a drawer; the header
+#: and the first few files are what somebody clicking a commit came for, and
+#: the link to cgit is right there for the rest.
+DIFF_MAX = 220_000
+
+
+def diff_of(url: str) -> dict:
+    """The change itself, as a patch.
+
+    cgit will hand over the raw mail form of a commit, which is the diff
+    everybody already knows how to read -- far better than scraping the
+    coloured table off the HTML page, which loses whitespace and is a
+    different shape in every cgit version."""
+    body = fetch(url, timeout=45)
+    if not body:
+        return {"text": "", "cut": False, "why": "the diff could not be read"}
+    # Everything above the first "diff --git" is the commit message and the
+    # diffstat, both of which are already on screen above this.
+    at = body.find("\ndiff --git ")
+    text = body[at + 1:] if at >= 0 else ""
+    # cgit signs the bottom of every patch it serves, the way git
+    # format-patch does.  That is for a mail, not for a page.
+    text = re.sub(r"\n-- \ncgit [^\n]*\n*$", "\n", text)
+    if not text.strip():
+        return {"text": "", "cut": False,
+                "why": "this commit changes no files"}
+    cut = len(text) > DIFF_MAX
+    if cut:
+        text = text[:DIFF_MAX].rsplit("\n", 1)[0]
+    return {"text": text, "cut": cut, "why": ""}
+
+
 def commit(cid: str, tree: str = "mainline") -> dict:
     """One commit, read off cgit and handed back as text.
 
@@ -645,6 +721,7 @@ def commit(cid: str, tree: str = "mainline") -> dict:
             "committer": info.get("committer", ("", ""))[0],
             "files": files,
             "changed": sum(f["changed"] for f in files),
+            "diff": diff_of(at.replace("/commit/", "/patch/")),
         }
 
     out = cached("commit %s %s" % (tree, cid), TTL_TREES, ask)
@@ -680,6 +757,8 @@ def author(email: str) -> dict:
         for state in ("accepted", "changes-requested", "rejected",
                       "superseded"):
             jobs["pw:" + state] = ex.submit(pw_count, email, state)
+        jobs["posted"] = ex.submit(pw_list, email)
+        jobs["taken"] = ex.submit(pw_list, email, "accepted")
         jobs["mainline"] = ex.submit(cgit_log, TREES["mainline"], email)
         jobs["next"] = ex.submit(cgit_log, TREES["linux-next"], email)
         jobs["tags"] = ex.submit(releases)
@@ -720,6 +799,8 @@ def author(email: str) -> dict:
                    "in_next": done["next"]["more"]}
     out["merged"] = merged[:60]
     out["in_next"] = queued[:30]
+    out["posted"] = done["posted"]["rows"]
+    out["taken"] = done["taken"]["rows"]
     out["deep"] = deep_state(email)
 
     # An address that answered is an address worth offering next time.  The

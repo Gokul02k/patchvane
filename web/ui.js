@@ -99,11 +99,60 @@ const MOTION = {
 window.matchMedia("(prefers-reduced-motion: reduce)")
   .addEventListener("change", (e) => { MOTION.ok = !e.matches; });
 
-/* Cross-fade the whole view where the browser can do it properly, and fall
-   back to a plain re-render where it cannot. */
+/* How long, and on what curve, the stylesheet says.  Asked here rather than
+   written into the script, so the motion scale has one home and a thing
+   animated from JavaScript cannot end up moving to its own clock. */
+function motion(time, curve) {
+  const css = getComputedStyle(document.documentElement);
+  return (css.getPropertyValue("--t-" + (time || "base")).trim() || ".4s")
+       + " " + (css.getPropertyValue("--ease" + (curve ? "-" + curve : ""))
+                   .trim() || "ease-out");
+}
+
+/* One view flowing into another where the browser can do it properly, and a
+   plain re-render where it cannot.  What the flow looks like is in the
+   stylesheet, under ::view-transition-*: this only says when one happens. */
 function transition(paint) {
   if (!MOTION.ok || !document.startViewTransition) { paint(); return; }
   document.startViewTransition(paint);
+}
+
+/* Something that is in two places at once: on screen now, and somewhere
+   else after the next paint.
+
+   The markup is thrown away and rebuilt on every render, so an element
+   cannot simply be transitioned to its new home -- the thing that arrives
+   is not the thing that left.  This measures where it was, and starts the
+   new one off wearing the old one's position and size so that it travels
+   there.  It is how the pill under the tabs crosses a gap it was never
+   in. */
+function morph(selector, paint) {
+  const was = document.querySelector(selector);
+  const from = was && was.getBoundingClientRect();
+  paint();
+  if (!MOTION.ok || !from || !from.width) return;
+  const now = document.querySelector(selector);
+  if (!now) return;
+  const to = now.getBoundingClientRect();
+  if (!to.width) return;
+  const dx = from.left - to.left, dy = from.top - to.top;
+  const sx = from.width / to.width, sy = from.height / to.height;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1
+      && Math.abs(sx - 1) < .01 && Math.abs(sy - 1) < .01) return;
+
+  now.style.transition = "none";
+  now.style.transformOrigin = "top left";
+  now.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+  requestAnimationFrame(() => {
+    now.style.transition = "transform " + motion("base", "spring");
+    now.style.willChange = "transform";
+    now.style.transform = "";
+    now.addEventListener("transitionend", () => {
+      now.style.transition = "";
+      now.style.transformOrigin = "";
+      now.style.willChange = "";
+    }, { once: true });
+  });
 }
 
 /* Panels and cards arrive in sequence instead of all at once.  Anything below
@@ -164,17 +213,21 @@ function flip(container, selector, paint) {
   if (!moved.length) return;
   /* The same curve and the same clock as everything else on screen: the
      stylesheet owns the motion scale, and a row sliding to its new place
-     should not be the one thing moving to its own time. */
-  const css = getComputedStyle(document.documentElement);
-  const how = "transform " + (css.getPropertyValue("--t-base").trim() || ".34s")
-            + " " + (css.getPropertyValue("--ease").trim() || "ease-out");
+     should not be the one thing moving to its own time.
+
+     Rows are dealt out from the top rather than all setting off together,
+     which is what turns a table reordering itself into something that
+     pours rather than something that snaps. */
+  const how = "transform " + motion("slow");
   requestAnimationFrame(() => {
-    moved.forEach((el) => {
+    moved.forEach((el, i) => {
       el.style.transition = how;
+      el.style.transitionDelay = Math.min(i, 10) * 11 + "ms";
       el.style.willChange = "transform";
       el.style.transform = "";
       el.addEventListener("transitionend", () => {
         el.style.transition = "";
+        el.style.transitionDelay = "";
         el.style.willChange = "";
       }, { once: true });
     });
@@ -197,10 +250,13 @@ function runCounters() {
       return;
     }
     COUNTED.add(key);
-    const started = performance.now(), span = 680;
+    /* Slower than it needs to be to read, and easing out further than a
+       cubic, because a number that lands on its value and stops draws the
+       eye to the stop.  This one coasts into it. */
+    const started = performance.now(), span = 900;
     const tick = (now) => {
       const t = Math.min(1, (now - started) / span);
-      el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)))
+      el.textContent = Math.round(target * (1 - Math.pow(1 - t, 4)))
         .toLocaleString();
       if (t < 1) requestAnimationFrame(tick);
     };

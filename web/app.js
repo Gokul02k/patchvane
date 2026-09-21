@@ -23,6 +23,14 @@ const S = {
   /* The Support tab: what was searched for, what is open, and what is being
      written. */
   support: {},
+  /* Which explanations have been unfolded.  Kept for the session only: the
+     question "what is this panel" is asked once and then not again. */
+  info: {},
+  /* Everything everybody sent, for whoever runs this deployment. */
+  inbox: [],
+  inboxAsked: false,
+  inboxPick: "",
+  answer: {},
 };
 
 /* ------------------------------------------------------------- constants */
@@ -104,6 +112,88 @@ const BUCKET_OF = (() => {
 
 function bucketOf(patch) { return BUCKET_OF[patch.state] || "unaccounted"; }
 
+/* One row per patch, not one per mail.
+
+   A patch sent as v1 and again as v2 is two postings, and the collected
+   data keeps both, which is right: the history is worth having. Counting
+   both is not. It said 428 patches where 257 had been written, filed the
+   abandoned v1 under Dropped while v2 sat in mainline, and left every
+   total on the page disagreeing with every other one.
+
+   So one version speaks for each patch: the one that landed if any did,
+   and otherwise the newest sent. Everything counted anywhere on this page
+   is counted over that set. The versions behind it are not lost -- they
+   are on the row that speaks, and the patch opens on all of them. */
+function roster(patches) {
+  const by = new Map();
+  for (const p of patches || []) {
+    const k = p.key || p.msgid || p.subject;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(p);
+  }
+  const out = [];
+  for (const rows of by.values()) {
+    const sorted = rows.slice().sort(
+      (a, b) => (a.version || 1) - (b.version || 1)
+             || String(a.date || "").localeCompare(String(b.date || "")));
+    const landed = sorted.filter((p) => (p.landed || []).length);
+    const speaks = landed.length ? landed[landed.length - 1]
+                                 : sorted[sorted.length - 1];
+    out.push(sorted.length > 1
+      ? Object.assign({}, speaks, { sent: sorted.length })
+      : speaks);
+  }
+  return out.sort((a, b) => String(b.date || "").localeCompare(a.date || ""));
+}
+
+/* How many series the patches that speak for themselves belong to.  Every
+   resend opens a new series on lore, so the raw count says 24 where 14
+   patches were written, which reads like an error next to them. */
+function seriesCount() {
+  return new Set(work().map((p) => p.series).filter(Boolean)).size;
+}
+
+/* Worked out once per collection rather than per view, so no two panels can
+   be looking at different sets. */
+function work() {
+  if (!S.roster || S.roster.of !== S.data) {
+    S.roster = { of: S.data, rows: roster((S.data || {}).patches || []) };
+  }
+  return S.roster.rows;
+}
+
+/* How far a patch actually got. The stages are cumulative -- anything in
+   mainline also reached linux-next -- so this is the furthest rung it
+   climbed, and the road to mainline is drawn from it. */
+const ROAD = [
+  { key: "posted", label: "Written and sent", color: C.blue,
+    blurb: "posted to a kernel list" },
+  { key: "answered", label: "Somebody answered", color: C.amber,
+    blurb: "a reply came back, or review started" },
+  { key: "taken", label: "A maintainer took it", color: C.purple,
+    blurb: "applied to a tree, or marked accepted" },
+  { key: "next", label: "Queued in linux-next", color: C.cyan,
+    blurb: "lined up for the next merge window" },
+  { key: "mainline", label: "In mainline", color: C.green,
+    blurb: "the commit is in Linus' tree" },
+];
+
+const ANSWERED = ["reviewed", "under-review", "needs-ack", "changes-requested"];
+
+function reached(p) {
+  if (p.state === "merged" || p.in_mainline) return 4;
+  if (p.state === "in-next" || p.in_next) return 3;
+  if (LANDED.includes(p.state) || (p.landed || []).length) return 2;
+  if (p.reply_count > 0 || ANSWERED.includes(p.state)) return 1;
+  return 0;
+}
+
+/* A patch that stopped for good, rather than one that is merely still
+   waiting. Superseded is not here: after roster() the version that was
+   replaced is not the one speaking, so nothing is dropped for having been
+   improved. */
+function closed(p) { return CLOSED.includes(p.state); }
+
 /* The ledger for a set of patches, plus whatever failed to classify. */
 function ledger(patches) {
   const count = {};
@@ -155,6 +245,26 @@ function subsystem(subject) {
 
 function treeOf(r) { return r.tree_hint || r.list || "unspecified"; }
 
+/* Explanation, folded away until it is wanted.
+
+   A paragraph telling you what a panel means is worth having the first
+   time and is clutter every time after, and there is no way to tell which
+   visit this is. So it lives behind the mark beside the heading: nothing
+   is lost, and the screen is the numbers rather than the prose about the
+   numbers. Open ones are remembered for the session. */
+function info(id, html, mark) {
+  const on = !!S.info[id];
+  return `<button class="infomark ${on ? "on" : ""}" ${act(toggleInfo, id)}
+    aria-expanded="${on}" title="${on ? "Hide" : "What is this?"}"
+    >${mark || "i"}</button>${on ? `<div class="infobody">${html}</div>` : ""}`;
+}
+
+function toggleInfo(id) {
+  if (S.info[id]) delete S.info[id];
+  else S.info[id] = true;
+  render();
+}
+
 function link(url, label) {
   if (!url) return `<span class="muted">\u2014</span>`;
   return `<a href="${esc(url)}" target="_blank" rel="noreferrer">${label || "lore \u2197"}</a>`;
@@ -170,6 +280,33 @@ function byAI(r) {
   return r.state_by_ai
     ? ` <span class="readmark" title="A model read this status out of the replies. It is a reading, not a record.">read</span>`
     : "";
+}
+
+/* The options for one dropdown, with how many rows each would leave.
+
+   Every column worth grouping by is worth filtering by, and the count
+   beside each option is the point: it says what pressing it will do before
+   it is pressed, and an option that would leave nothing is not offered at
+   all. Ordered by how common the value is unless the caller knows better.
+   Used by every filter on the site, so they all behave the same way. */
+function countedValues(rows, of, label, order) {
+  const c = {};
+  rows.forEach((r) => {
+    const k = of(r);
+    if (k === "" || k === null || k === undefined) return;
+    c[k] = (c[k] || 0) + 1;
+  });
+  const keys = Object.keys(c);
+  keys.sort(order ? order : (a, b) => c[b] - c[a] || a.localeCompare(b));
+  return keys.map((k) => ({ value: k,
+                            label: `${label ? label(k) : k} (${c[k]})` }));
+}
+
+/* A dropdown built straight from a column, for the columns that need
+   nothing cleverer than their own values. */
+function byColumn(key, all, of, label) {
+  return { key, all, values: (rows) => countedValues(rows, of, label),
+           match: (r, v) => String(of(r)) === v };
 }
 
 function stateFilter() {
@@ -194,31 +331,49 @@ function stateFilter() {
 }
 
 function treeFilter() {
-  return {
-    key: "tree", all: "Any tree",
-    values: (rows) => {
-      const c = {};
-      rows.forEach((r) => { c[treeOf(r)] = (c[treeOf(r)] || 0) + 1; });
-      return Object.keys(c).sort().map((k) => ({ value: k, label: `${k} (${c[k]})` }));
-    },
-    match: (r, v) => treeOf(r) === v,
-  };
+  return byColumn("tree", "Any tree", treeOf);
 }
 
 function subsystemFilter() {
+  return byColumn("sub", "Any subsystem", (r) => subsystem(r.subject),
+                  (k) => k + "/");
+}
+
+/* The road, as a filter, so a stage clicked on the overview lands on
+   exactly the patches it counted.  "taken" is everything that got at least
+   that far; "here:taken" is what is sitting there; "lost:taken" is what
+   stopped there. */
+function roadFilter() {
   return {
-    key: "sub", all: "Any subsystem",
+    key: "road", all: "Any stage",
     values: (rows) => {
-      const c = {};
-      rows.forEach((r) => { const s = subsystem(r.subject); c[s] = (c[s] || 0) + 1; });
-      return Object.entries(c).sort((a, b) => b[1] - a[1])
-        .map(([k, v]) => ({ value: k, label: `${k}/ (${v})` }));
+      const far = rows.map(reached);
+      const out = [];
+      ROAD.forEach((s, i) => {
+        const through = far.filter((n) => n >= i).length;
+        if (through) out.push({ value: s.key, label: `${s.label} (${through})` });
+        const lost = rows.filter((p, n) => far[n] === i && closed(p)).length;
+        if (lost) {
+          out.push({ value: "lost:" + s.key,
+                     label: `\u00a0\u00a0dropped at ${s.label} (${lost})` });
+        }
+      });
+      return out;
     },
-    match: (r, v) => subsystem(r.subject) === v,
+    match: (r, v) => {
+      const part = v.includes(":") ? v.split(":")[0] : "";
+      const at = ROAD.findIndex((s) => s.key === v.split(":").pop());
+      if (at < 0) return true;
+      const got = reached(r);
+      if (part === "lost") return got === at && closed(r);
+      if (part === "here") return got === at && !closed(r);
+      return got >= at;
+    },
   };
 }
 
 const PATCH_FIELDS = {
+  road: (r) => ROAD[reached(r)].key,
   tree: (r) => treeOf(r),
   state: (r) => r.state,
   status: (r) => state(r.state).label,
@@ -262,63 +417,45 @@ function patchGridOpts(extra) {
     searchIn: (r) => [r.subject, r.tree_hint, r.list, r.state, r.series_name,
                       r.pw_project, r.state_detail].join(" "),
     fields: PATCH_FIELDS,
-    filters: [stateFilter(), subsystemFilter(), treeFilter()],
+    filters: [stateFilter(), roadFilter(), subsystemFilter(), treeFilter()],
     groups: [{ key: "tree", label: "by tree", of: treeOf },
              { key: "state", label: "by status", of: (r) => state(r.state).label },
+             { key: "road", label: "by stage", of: (r) => ROAD[reached(r)].label },
              { key: "sub", label: "by subsystem", of: (r) => subsystem(r.subject) + "/" }],
     rowKey: (r) => r.msgid || r.lore || r.subject,
     sort: "date", dir: "desc", per: 25,
   }, extra || {});
 }
 
-function funnelStages() {
-  const d = S.data, k = d.kpis;
-  const engaged = d.patches.filter((p) => p.reply_count > 0
-    || !["awaiting", "superseded"].includes(p.state)).length;
-  return [
-    { label: "Posted", value: k.patches, color: C.blue,
-      hint: "Every patch mail sent to a kernel list." },
-    { label: "Got a response", value: engaged, color: C.amber,
-      hint: "Someone replied, or patchwork moved it off the default state." },
-    { label: "Accepted", value: k.merged + k.in_next + k.in_tree + k.accepted,
-      color: C.purple,
-      hint: "A maintainer applied it, or patchwork says accepted." },
-    { label: "In linux-next", value: k.merged + k.in_next, color: C.cyan,
-      hint: "Reached linux-next, so it is lined up for a merge window." },
-    { label: "In mainline", value: k.merged, color: C.green,
-      hint: "The commit is in Linus' tree." },
-  ];
+/* The road, stage by stage, over one row per patch.
+
+   Each stage says three things, because the three are different questions
+   and the old funnel only answered the first: how many got this far, how
+   many are sitting here now, and how many stopped here for good. The last
+   is the one that was missing -- a patch that was discussed and then
+   abandoned used to vanish into a single "Dropped" total at the bottom of
+   the page, with nothing to say at which point it was lost. */
+function road() {
+  const rows = work();
+  const far = rows.map(reached);
+  return ROAD.map((s, i) => {
+    const here = rows.filter((p, n) => far[n] === i);
+    return Object.assign({}, s, {
+      i,
+      through: far.filter((n) => n >= i).length,
+      resting: here.filter((p) => !closed(p)).length,
+      lost: here.filter(closed).length,
+      lostRows: here.filter(closed),
+    });
+  });
 }
 
 /* ----------------------------------------------------------------- views */
 
 function viewOverview() {
   const d = S.data, k = d.kpis;
-  const attention = d.threads.filter((t) => t.waiting_on_us);
-  const owed = owedWork();
-  const book = ledger(d.patches);
-
-  const cards = [
-    ["blue", "Patches posted", k.patches, `across ${plural(k.series, "series", "series")}`,
-     "\u2191", () => go("patches"), ""],
-    ["green", "In mainline", k.merged, `${pct(k.merged, k.patches)} of everything posted`,
-     "\u2713", () => go("outcomes"), ""],
-    ["amber", "Waiting on a reply from you", owed.replies.threads.length,
-     `${plural(owed.replies.patches.length, "patch", "patches")} in those threads`,
-     "\u2709", () => go("owed"), owed.replies.threads.length ? "urgent" : ""],
-    ["purple", "Needs a new version", owed.respin.series.length,
-     `${plural(owed.respin.patches.length, "patch", "patches")} to respin`,
-     "\u27F3", () => go("owed"), owed.respin.patches.length ? "urgent" : ""],
-  ].map(([cls, label, value, sub, icon, onclick, extra], i) => `
-    <div class="kpi ${cls} ${extra}" data-reveal style="--i:${i}"
-         tabindex="0" ${act(onclick)}>
-      <div class="badge">${icon}</div>
-      <div class="label">${esc(label)}</div>
-      ${counter(value, "kpi-" + label)}
-      <div class="sub">${esc(sub)}</div>
-    </div>`).join("");
-
-  const fn = chartSlot("fn", 190, (w, h) => funnel(funnelStages(), w, h));
+  const attention = conversations().filter((t) => t.waiting_on_us);
+  const book = ledger(work());
 
   const tl = d.timeline.slice(-45);
   const chart = chartSlot("ov-time", 168, (w, h) => lineChart(
@@ -382,7 +519,7 @@ function viewOverview() {
       did not work last time.</strong> ${why}`
       : `<strong>${plural(missed, "request")} to the archives did not come
          back.</strong>`}
-    ${k.patches
+    ${work().length
       ? " Some of what is below may be missing or out of date."
       : " That is why there is nothing below: this is what could be read, "
         + "not an answer about your patches."}
@@ -392,18 +529,9 @@ function viewOverview() {
 
   return `
   ${shortfall}
-  <div class="kpis">${cards}</div>
-
-  <div class="panel wide" data-reveal>
-    <header><h2>The road to mainline</h2>
-      <span class="sub">how far each patch got, stage by stage</span>
-      <div class="spacer"></div>
-      <button class="link" ${act(go, "patches")}>See every patch</button></header>
-    <div class="body flush">${fn}</div>
-  </div>
-
+  ${roadPanel()}
   ${stalePanel()}
-  ${ledgerPanel(book, k.patches)}
+  ${ledgerPanel(book, work().length)}
 
   <div class="split">
     <div class="stack">
@@ -437,6 +565,72 @@ function viewOverview() {
    at "posted".  This is the opposite, and the one that has to balance.  Each
    patch appears exactly once, and the sum is stated on screen so a bucket
    that stops adding up is visible rather than merely wrong. */
+/* The road, drawn. Each stage is a button that lands on the patches behind
+   it, and each stage that lost something says so and opens those instead,
+   so "dropped" is answerable at the point it happened rather than as one
+   number at the bottom of the page. */
+function roadPanel() {
+  const stages = road();
+  const top = stages[0].through || 1;
+  const anyLost = stages.some((s) => s.lost);
+
+  const steps = stages.map((s) => `
+    <div class="step ${s.through ? "" : "nil"}" style="--i:${s.i};
+         --tint:${s.color}; --w:${Math.round((s.through / top) * 100)}%">
+      <button class="stepface" ${act(showStage, s.key)}
+              title="Every patch that got at least this far">
+        <span class="stepbar"><i></i></span>
+        <span class="stepn">${counter(s.through, "road-" + s.key)}</span>
+        <span class="stepname">${esc(s.label)}</span>
+        <span class="stepblurb">${esc(s.blurb)}</span>
+        <span class="steppc">${pct(s.through, top)} of everything written</span>
+      </button>
+      <div class="steptail">
+        ${s.resting ? `<button class="resting" ${act(showStage, s.key, "here")}
+          title="Got this far and no further, and has not been dropped">
+          <span class="dot"></span>${s.resting} sitting here</button>` : ""}
+        ${s.lost ? `<button class="binbtn" ${act(showStage, s.key, "lost")}
+          title="Reached this stage and then stopped for good">
+          ${BIN}<span>${s.lost} dropped</span></button>` : ""}
+      </div>
+    </div>`).join("");
+
+  return `<div class="panel wide road" data-reveal>
+    <header><h2>The road to mainline</h2>
+      <span class="sub">every patch counted once, at the version that
+        speaks for it</span>
+      <div class="spacer"></div>
+      ${info("road", `Each stage counts the patches that got <em>at least</em>
+        that far, so the numbers narrow from left to right. Under each one:
+        how many are sitting at that stage now, and how many reached it and
+        then stopped for good. A patch you improved is not dropped &mdash;
+        the v2 speaks for it, and the v1 is on its record.
+        ${anyLost ? "" : "Nothing of yours has been dropped at any stage."}`)}
+      <button class="link" ${act(go, "patches")}>See every patch</button>
+    </header>
+    <div class="body flush"><div class="steps">${steps}</div></div>
+  </div>`;
+}
+
+const BIN = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+  <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.2a1 1 0 0 0 1 .8h4.6a1 1 0 0 0 1-.8L12 4"
+    fill="none" stroke="currentColor" stroke-width="1.2"
+    stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M6.6 6.6v5M9.4 6.6v5" fill="none" stroke="currentColor"
+    stroke-width="1.2" stroke-linecap="round"/></svg>`;
+
+/* Clicking a stage goes to the patches it counted.  "here" and "lost"
+   narrow that to the ones resting at it and the ones that died at it. */
+function showStage(key, part) {
+  go("patches");
+  const st = gridState("patches", patchGridOpts());
+  st.q = "";
+  st.filters = { road: (part ? part + ":" : "") + key };
+  st.page = 1;
+  gridSave("patches");
+  render();
+}
+
 /* When a source could not be reached, the numbers that come from it are the
    ones from before.  Say which, rather than letting them pass as today's. */
 function stalePanel() {
@@ -568,15 +762,17 @@ function feedItem(a, i) {
 
 function viewPatches() {
   const d = S.data, k = d.kpis;
+  const rows = work();
   const st = GRIDS["patches"];
   const on = (st && st.filters.state) || "";
-  const book = ledger(d.patches);
+  const book = ledger(rows);
+  const resent = rows.filter((p) => p.sent > 1).length;
 
   /* Same buckets as the overview, so a number clicked there and a chip
      pressed here can never disagree. */
   const chips = `<div class="chipbar">`
     + `<button class="chip grey ${on === "" ? "on" : ""}" data-reveal
-        ${act(gridFilter, "patches", "state", "")}>Everything<b>${k.patches}</b></button>`
+        ${act(gridFilter, "patches", "state", "")}>Everything<b>${rows.length}</b></button>`
     + book.filter((b) => b.value).map((b, i) => `<button class="chip ${b.cls} ${
         on === "~" + b.key ? "on" : ""}" data-reveal style="--i:${i + 1}"
         title="${esc(b.blurb)}"
@@ -584,18 +780,19 @@ function viewPatches() {
         >${esc(b.label)}<b>${b.value}</b></button>`).join("")
     + `</div>`;
 
-  return grid("patches", d.patches, patchColumns(), patchGridOpts({
-    title: "Every patch you posted",
-    subtitle: `${k.patches} patches, ${k.series} series, since ${day(k.first)}`,
+  return grid("patches", rows, patchColumns(), patchGridOpts({
+    title: "Every patch you wrote",
+    subtitle: `${plural(rows.length, "patch", "patches")} in ${
+      plural(seriesCount(), "series", "series")}, since ${day(k.first)}`
+      + (resent ? ` \u00b7 ${resent} sent more than once` : ""),
     chips,
   }));
 }
 
 function viewOutcomes() {
-  const d = S.data;
-  const dropped = d.patches.filter((p) => CLOSED.includes(p.state));
+  const dropped = work().filter(closed);
   return tabs("out", [
-    ["landed", `Landed (${d.merged.length})`, viewLanded],
+    ["landed", `Landed (${S.data.merged.length})`, viewLanded],
     ["dropped", `Dropped (${dropped.length})`, () => viewDropped(dropped)],
   ]);
 }
@@ -621,17 +818,20 @@ function viewDropped(rows) {
       <div class="label">${esc(state(st).label)}</div>${counter(n, "dr-" + st)}
       <div class="sub">${esc((why[st] || [""])[0])}</div></div>`).join("");
 
-  const supers = rows.filter((r) => r.state === "superseded").length;
-
   return `<div class="kpis four">${cards}</div>
     <p class="hint standalone">${plural(rows.length, "patch", "patches")} stopped
-    moving${supers ? `, and ${supers} of those only because you sent a better
-    version, which is how it is meant to go` : ""}.</p>`
+    for good. A patch you improved and sent again is not here: the newer
+    version speaks for it, and the older one is on its record.</p>`
     + grid("dropped", rows, [
-      { key: "subject", label: "Patch", cls: "subject", width: "44%",
+      { key: "subject", label: "Patch", cls: "subject", width: "40%",
         csv: (r) => r.subject,
         render: (r) => `${subj(r.msgid || r.series, r.subject)}${r.version > 1
             ? `<span class="tag">v${r.version}</span>` : ""}` },
+      { key: "road", label: "Got as far as", sort: reached,
+        csv: (r) => ROAD[reached(r)].label,
+        render: (r) => `<span class="pill" style="color:${ROAD[reached(r)].color};
+          background:color-mix(in srgb, ${ROAD[reached(r)].color} 16%, transparent)"
+          >${esc(ROAD[reached(r)].label)}</span>` },
       { key: "state", label: "What happened", sort: (r) => state(r.state).rank,
         csv: (r) => state(r.state).label, render: (r) => pill(r.state) },
       { key: "state_detail", label: "Why", width: "26%",
@@ -647,8 +847,10 @@ function viewDropped(rows) {
       placeholder: "Search, or try state:rejected tree:net-next\u2026",
       searchIn: (r) => [r.subject, r.state, r.state_detail, treeOf(r)].join(" "),
       fields: PATCH_FIELDS,
-      filters: [stateFilter(), treeFilter()],
+      filters: [stateFilter(), roadFilter(), subsystemFilter(), treeFilter()],
       groups: [{ key: "state", label: "by outcome", of: (r) => state(r.state).label },
+               { key: "road", label: "by stage", of: (r) => ROAD[reached(r)].label },
+               { key: "sub", label: "by subsystem", of: (r) => subsystem(r.subject) + "/" },
                { key: "tree", label: "by tree", of: treeOf }],
       rowKey: (r) => r.msgid || r.lore || r.subject,
       sort: "date", dir: "desc", per: 25,
@@ -656,15 +858,19 @@ function viewDropped(rows) {
 }
 
 function viewLanded() {
-  const d = S.data, k = d.kpis;
+  const d = S.data;
   const rows = d.merged;
   const mainline = rows.filter((r) => r.mainline).length;
+  /* Counted off the same one-row-per-patch set as everywhere else, rather
+     than off the server's per-posting totals, so these four and the road on
+     the overview cannot drift apart. */
+  const at = work().map(reached);
 
   const cards = [
     ["green", "Commits in mainline", mainline],
-    ["cyan", "Queued in linux-next", k.in_next],
-    ["blue", "In a maintainer tree", k.in_tree],
-    ["purple", "Marked accepted", k.accepted],
+    ["cyan", "Queued in linux-next", at.filter((n) => n === 3).length],
+    ["blue", "In a maintainer tree", at.filter((n) => n === 2).length],
+    ["purple", "Still being written or read", at.filter((n) => n <= 1).length],
   ].map(([cls, label, v], i) => `<div class="kpi ${cls} flat" data-reveal style="--i:${i}">
     <div class="label">${esc(label)}</div>${counter(v, "ld-" + label)}</div>`).join("");
 
@@ -693,8 +899,16 @@ function viewLanded() {
       placeholder: "Search a commit or a subject\u2026",
       searchIn: (r) => [r.subject, r.short, r.trees.join(" ")].join(" "),
       fields: { tree: (r) => r.trees.join(" "), mainline: (r) => r.mainline,
-                date: (r) => r.date, versions: (r) => r.versions || 1 },
-      groups: [{ key: "where", label: "by tree", of: (r) => r.trees[0] || "\u2014" }],
+                date: (r) => r.date, versions: (r) => r.versions || 1,
+                sub: (r) => subsystem(r.subject) },
+      filters: [
+        byColumn("where", "Anywhere", (r) => r.mainline ? "mainline"
+          : r.in_next ? "linux-next" : (r.trees[0] || "a maintainer tree")),
+        subsystemFilter(),
+        byColumn("year", "Any year", (r) => (r.date || "").slice(0, 4)),
+      ],
+      groups: [{ key: "where", label: "by tree", of: (r) => r.trees[0] || "\u2014" },
+               { key: "sub", label: "by subsystem", of: (r) => subsystem(r.subject) + "/" }],
       rowKey: (r) => r.commit || r.short,
       sort: "date", dir: "desc", per: 25,
     });
@@ -703,23 +917,74 @@ function viewLanded() {
 function viewDiscussions() {
   const d = S.data;
   return tabs("disc", [
-    ["threads", `Threads (${d.threads.length})`, discThreads],
+    ["threads", `Threads (${conversations().length})`, discThreads],
     ["people", `People (${d.people.length})`, discPeople],
     ["tags", `Review tags (${d.tagrows.length})`, discTags],
   ]);
 }
 
+/* One row per conversation, the same way the patch list is one row per
+   patch.  Posting v1, v2 and v3 opens three threads on lore, and listing
+   all three put the same subject on screen five times over, four of them
+   ending "Superseded", which is a list of postings rather than of
+   conversations. The newest round stands for the discussion and says how
+   many came before it. */
+function conversations() {
+  if (!S.talk || S.talk.of !== S.data) {
+    const by = new Map();
+    for (const t of (S.data.threads || [])) {
+      const k = plainSubject(t.series) || t.id;
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+    }
+    /* A thread carries the status of the posting it belongs to, so the
+       last round of a patch that has since reached mainline still reads
+       "Superseded" here while the patch list reads "In mainline". They are
+       the same patch; they get the same word. */
+    const said = new Map();
+    for (const p of work()) {
+      for (const name of [p.subject, p.series_name, p.raw_subject]) {
+        const k = plainSubject(name);
+        if (k) said.set(k, p.state);
+      }
+    }
+
+    const rows = [];
+    for (const [k, group] of by) {
+      const sorted = group.slice().sort(
+        (a, b) => compare(a.last_date, b.last_date));
+      const newest = sorted[sorted.length - 1];
+      const one = group.length > 1
+        ? Object.assign({}, newest, {
+            rounds: group.length,
+            /* Every message of every round: the conversation is all of it,
+               not only what was said about the last version. */
+            count: group.reduce((a, t) => a + (t.count || 0), 0),
+          })
+        : Object.assign({}, newest);
+      if (said.has(k)) one.state = said.get(k);
+      rows.push(one);
+    }
+    S.talk = { of: S.data, rows: rows.sort((a, b) => compare(b.last_date, a.last_date)) };
+  }
+  return S.talk.rows;
+}
+
 function discThreads() {
-  return grid("threads", S.data.threads, [
+  return grid("threads", conversations(), [
     { key: "series", label: "Thread", cls: "subject", width: "46%",
       csv: (r) => r.series,
-      render: (r) => `${subj(r.id || r.series, r.series)}
+      render: (r) => `${subj(r.id || r.series, r.series)}${r.rounds
+          ? `<span class="tag">${r.rounds} rounds</span>` : ""}
         <div class="sub2">${mark(r.excerpt)}</div>` },
     { key: "last_from", label: "Last word from", csv: (r) => r.last_from,
       render: (r) => `${mark(r.last_from)}<div class="sub2">${ago(r.last_date)}</div>` },
     { key: "state", label: "Status", sort: (r) => state(r.state).rank,
       csv: (r) => state(r.state).label, render: (r) => pill(r.state) },
     { key: "count", label: "Msgs", cls: "num", render: (r) => r.count },
+    { key: "rounds", label: "Rounds", cls: "num", sort: (r) => r.rounds || 1,
+      csv: (r) => r.rounds || 1,
+      render: (r) => r.rounds || `<span class="muted">1</span>` },
     { key: "waiting_on_us", label: "Action", sort: (r) => (r.waiting_on_us ? 1 : 0),
       csv: (r) => (r.waiting_on_us ? "reply needed" : ""),
       render: (r) => r.waiting_on_us
@@ -735,6 +1000,13 @@ function discThreads() {
     fields: { tree: (r) => r.tree, state: (r) => r.state,
               from: (r) => r.last_from, replies: (r) => r.count,
               waiting: (r) => (r.waiting_on_us ? "yes" : "no") },
+    filters: [
+      stateFilter(),
+      byColumn("waiting", "Anything", (r) => r.waiting_on_us
+        ? "waiting on you" : "nothing owed"),
+      byColumn("tree", "Any tree", (r) => r.tree || "unspecified"),
+      byColumn("from", "Anyone last", (r) => r.last_from || "nobody"),
+    ],
     groups: [{ key: "tree", label: "by tree", of: (r) => r.tree || "\u2014" },
              { key: "state", label: "by status", of: (r) => state(r.state).label }],
     rowKey: (r) => r.id || r.series,
@@ -761,6 +1033,15 @@ function discPeople() {
     searchIn: (r) => r.name + " " + r.addr,
     fields: { name: (r) => r.name, replies: (r) => r.replies,
               tags: (r) => r.tags, threads: (r) => r.series },
+    filters: [
+      byColumn("gave", "Any tag given", (r) => Object.keys(r.kinds || {}).sort().join(", ")
+        || "no tag, only replies"),
+      byColumn("often", "However often", (r) => r.replies > 9 ? "10 or more replies"
+        : r.replies > 2 ? "3 to 9 replies" : "1 or 2 replies"),
+    ],
+    groups: [{ key: "often", label: "by how often", of: (r) => r.replies > 9
+               ? "10 or more replies" : r.replies > 2 ? "3 to 9 replies"
+               : "1 or 2 replies" }],
     rowKey: (r) => r.addr || r.name,
     sort: "replies", dir: "desc", per: 25,
   });
@@ -791,7 +1072,14 @@ function discTags() {
     title: "Review tags you collected",
     placeholder: "Search, or try tag:Reviewed-by\u2026",
     searchIn: (r) => [r.tag, r.who, r.subject].join(" "),
-    fields: { tag: (r) => r.tag, who: (r) => r.who, state: (r) => r.state },
+    fields: { tag: (r) => r.tag, who: (r) => r.who, state: (r) => r.state,
+              sub: (r) => subsystem(r.subject) },
+    filters: [
+      byColumn("tag", "Any tag", (r) => r.tag),
+      byColumn("who", "Anyone", (r) => r.who),
+      stateFilter(),
+      subsystemFilter(),
+    ],
     groups: [{ key: "tag", label: "by tag", of: (r) => r.tag },
              { key: "who", label: "by person", of: (r) => r.who }],
     rowKey: (r) => r.tag + r.addr + r.subject,
@@ -855,7 +1143,7 @@ function insActivity() {
 
 function subsystemRows() {
   const map = {};
-  S.data.patches.forEach((p) => {
+  work().forEach((p) => {
     const s = subsystem(p.subject);
     const g = map[s] || (map[s] = { name: s, patches: 0, merged: 0, next: 0,
                                     review: 0, open: 0, bad: 0 });
@@ -882,7 +1170,7 @@ function insSubsystems() {
         <span class="sub">${plural(rows.length, "subsystem")} touched</span></header>
       <div class="body"><div class="donutwrap">
         ${donut(items, 170, rows.length, "areas")}
-        ${legend(items, d.kpis.patches)}</div></div>
+        ${legend(items, work().length)}</div></div>
     </div>` + grid("subsystems", rows, [
       { key: "name", label: "Subsystem", csv: (r) => r.name,
         render: (r) => `<strong>${mark(r.name)}/</strong>` },
@@ -905,6 +1193,10 @@ function insSubsystems() {
       searchIn: (r) => r.name,
       fields: { name: (r) => r.name, patches: (r) => r.patches,
                 merged: (r) => r.merged, open: (r) => r.open },
+      filters: [byColumn("how", "However they are doing", (r) => r.merged
+        ? "something in mainline" : r.next ? "something accepted"
+        : r.review ? "under review" : r.open ? "still waiting"
+        : "nothing moving")],
       rowKey: (r) => r.name, sort: "patches", dir: "desc", per: 25,
     });
 }
@@ -948,21 +1240,40 @@ function insTrees() {
     searchIn: (r) => r.tree,
     fields: { tree: (r) => r.tree, patches: (r) => r.patches,
               merged: (r) => r.merged, open: (r) => r.open, tags: (r) => r.tags },
+    filters: [byColumn("how", "However they are doing", (r) => r.merged
+      ? "something in mainline" : r.in_next ? "something in linux-next"
+      : r.open ? "still waiting" : "nothing moving")],
     rowKey: (r) => r.tree, sort: "patches", dir: "desc", per: 25,
   });
 }
 
 function insNumbers() {
   const d = S.data, k = d.kpis;
-  const rows = [
-    ["Patches posted", k.patches], ["Series", k.series],
-    ["Distinct subjects", k.unique_patches], ["Series respun as v2 or later", k.versions],
-    ["In mainline", k.merged], ["In linux-next", k.in_next],
-    ["In a maintainer tree", k.in_tree], ["Marked accepted", k.accepted],
-    ["Carrying a review tag", k.reviewed], ["Being discussed", k.under_review],
-    ["No response yet", k.awaiting], ["Changes requested", k.changes_requested],
-    ["Superseded by a later version", k.superseded], ["Rejected", k.rejected],
-    ["Not applicable or handled elsewhere", k.not_applicable],
+  /* Every count on this table comes off the same one-row-per-patch set as
+     the rest of the site.  It used to mix that with the server's
+     per-posting totals, which is how two panels could both be right and
+     still disagree. */
+  const rows = work();
+  const n = (f) => rows.filter(f).length;
+  const st = (...names) => n((p) => names.includes(p.state));
+  const sent = rows.reduce((a, p) => a + (p.sent || 1), 0);
+
+  const numbers = [
+    ["Patches written", rows.length],
+    ["Mails sent to post them", sent],
+    ["Sent more than once", n((p) => (p.sent || 1) > 1)],
+    ["Series they belong to", seriesCount()],
+    ["Series respun as v2 or later", k.versions],
+    ["In mainline", st("merged")], ["In linux-next", st("in-next")],
+    ["In a maintainer tree", st("in-tree")],
+    ["Marked accepted", st("accepted", "queued", "awaiting-upstream")],
+    ["Carrying a review tag", st("reviewed")],
+    ["Being discussed", st("under-review", "needs-ack")],
+    ["No response yet", st("awaiting")],
+    ["Changes requested", st("changes-requested")],
+    ["Rejected", st("rejected")],
+    ["Not applicable or handled elsewhere",
+     st("not-applicable", "handled-elsewhere", "deferred")],
     ["Review tags collected", k.review_tags], ["People who replied", k.reviewers],
     ["Replies received", k.replies], ["Threads waiting on you", k.waiting_on_us],
     ["Trees and lists targeted", k.trees], ["Patchwork projects", k.pw_projects],
@@ -980,8 +1291,13 @@ function insNumbers() {
   const bmax = Math.max(...Object.values(buckets), 1);
 
   return `<div class="row2" style="align-items:start">
-    <div class="panel" data-reveal><header><h2>Every number</h2></header>
-      <div class="body"><dl class="kv">${rows.map(([a, b]) =>
+    <div class="panel" data-reveal><header><h2>Every number</h2>
+      <div class="spacer"></div>
+      ${info("numbers", `Each patch is counted once, at the version that
+        speaks for it, which is why "patches written" is smaller than
+        "mails sent to post them". The status counts below add up to the
+        first of those, not the second.`)}</header>
+      <div class="body"><dl class="kv">${numbers.map(([a, b]) =>
         `<dt>${esc(a)}</dt><dd class="num">${esc(b)}</dd>`).join("")}</dl></div></div>
     <div class="panel" data-reveal><header><h2>How big your series are</h2></header>
       <div class="body"><div class="bars">${Object.entries(buckets).map(([nm, v], i) =>
@@ -999,8 +1315,9 @@ function owedWork() {
   const byId = new Map(d.series.map((s) => [s.id, s]));
   const waiting = new Set(d.series.filter((s) => s.waiting_on_us).map((s) => s.id));
 
+  const rows = work();
   const groups = new Map();
-  d.patches.filter((p) => p.state === "changes-requested").forEach((p) => {
+  rows.filter((p) => p.state === "changes-requested").forEach((p) => {
     let g = groups.get(p.series);
     if (!g) {
       const s = byId.get(p.series) || {};
@@ -1022,14 +1339,14 @@ function owedWork() {
 
   return {
     replies: {
-      threads: d.threads.filter((t) => t.waiting_on_us),
-      patches: d.patches.filter((p) => waiting.has(p.series)),
+      threads: conversations().filter((t) => t.waiting_on_us),
+      patches: rows.filter((p) => waiting.has(p.series)),
     },
     respin: {
       series: respins,
-      patches: d.patches.filter((p) => p.state === "changes-requested"),
+      patches: rows.filter((p) => p.state === "changes-requested"),
     },
-    dropped: d.patches.filter((p) => CLOSED.includes(p.state)),
+    dropped: rows.filter(closed),
   };
 }
 
@@ -1134,12 +1451,198 @@ function owedNotes() {
 /* -------------------------------------------------------------- settings */
 
 function viewSettings() {
-  return tabs("set", [
+  loadSupport();
+  const tabList = [
     ["general", "General", setGeneral],
     ["ai", "Assistant", setAI],
     ["sources", "Data sources", setSources],
     ["support", "Support", setSupport],
-  ]);
+  ];
+  /* Only for whoever runs this deployment.  The server decides that, and
+     checks it again on every request: a tab that is merely not drawn is
+     not a permission. */
+  if ((S.support || {}).owner) {
+    const waiting = (S.inbox || []).filter((r) => r.status === "new").length;
+    tabList.push(["inbox", waiting ? `Feedback (${waiting})` : "Feedback",
+                  setInbox]);
+  }
+  return tabs("set", tabList);
+}
+
+/* Everything everybody sent, and the way to answer it.
+
+   An answer is a status and, if there is something to say, a note; both go
+   back to whoever wrote the report, by mail if this server has mail and on
+   their own Support tab either way. */
+function setInbox() {
+  loadInbox();
+  const rows = S.inbox || [];
+  const pick = S.inboxPick || "";
+
+  if (!S.inboxAsked) {
+    return `<div class="panel wide" data-reveal><div class="body">
+      <p class="hint" style="margin:0"><span class="spin"></span>
+      Reading what people sent\u2026</p></div></div>`;
+  }
+  if (!rows.length) {
+    return `<div class="panel wide" data-reveal><div class="body">
+      <div class="empty"><div class="emptyicon">\u2709</div>
+      <h3>Nothing has been sent yet</h3>
+      <p>Anything written on the Support tab arrives here.</p>
+      </div></div></div>`;
+  }
+
+  const counts = {};
+  rows.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const cards = Object.keys(FEEDBACK_STATUS).filter((k) => counts[k])
+    .map((k, i) => `<div class="kpi ${fbStatus(k)[1]} flat" data-reveal
+      style="--i:${i}"><div class="label">${esc(fbStatus(k)[0])}</div>
+      ${counter(counts[k], "fb-" + k)}</div>`).join("");
+
+  return `<div class="kpis four">${cards}</div>`
+    + grid("inbox", rows, [
+      { key: "kind", label: "What", sort: (r) => r.kind,
+        csv: (r) => fbKind(r.kind)[1],
+        render: (r) => `<span class="pill ${fbKind(r.kind)[3]}">${
+          fbKind(r.kind)[2]} ${esc(fbKind(r.kind)[1])}</span>` },
+      { key: "text", label: "What they said", cls: "subject", width: "40%",
+        csv: (r) => r.text,
+        render: (r) => `<button class="said" title="Answer this"
+          ${act(openReport, r.id)}>${mark(r.text.slice(0, 160))}${
+          r.text.length > 160 ? "\u2026" : ""}</button>
+          ${(r.answers || []).length ? `<div class="sub2">${
+            plural(r.answers.length, "answer")} sent</div>` : ""}` },
+      { key: "who", label: "From", csv: (r) => r.who,
+        render: (r) => `${mark(r.name || r.who)}${r.name
+          ? `<div class="sub2">${esc(r.who)}</div>` : ""}` },
+      { key: "where", label: "On page", csv: (r) => r.where,
+        render: (r) => r.where
+          ? `<span class="nowrap muted">${esc(r.where)}</span>`
+          : `<span class="muted">\u2014</span>` },
+      { key: "status", label: "Status", sort: (r) => r.status,
+        csv: (r) => fbStatus(r.status)[0],
+        render: (r) => `<span class="pill ${fbStatus(r.status)[1]}">${
+          esc(fbStatus(r.status)[0])}</span>` },
+      { key: "at", label: "Sent",
+        render: (r) => `<span class="nowrap muted">${ago(r.at)}</span>` },
+      { key: "do", label: "", sortable: false,
+        render: (r) => `<button class="btn sm" ${act(openReport, r.id)}>${
+          pick === r.id ? "Close" : "Answer"}</button>` },
+    ], {
+      title: "What people sent",
+      subtitle: `${plural(rows.length, "report")}, newest first`,
+      placeholder: "Search what somebody wrote\u2026",
+      searchIn: (r) => [r.text, r.who, r.name, r.kind, r.status].join(" "),
+      fields: { kind: (r) => r.kind, status: (r) => r.status,
+                who: (r) => r.who, where: (r) => r.where },
+      filters: [
+        byColumn("status", "Any status", (r) => r.status,
+                 (k) => fbStatus(k)[0]),
+        byColumn("kind", "Anything", (r) => r.kind, (k) => fbKind(k)[1]),
+        byColumn("who", "Anyone", (r) => r.name || r.who),
+        byColumn("where", "Any page", (r) => r.where || "not said"),
+      ],
+      groups: [{ key: "status", label: "by status", of: (r) => fbStatus(r.status)[0] },
+               { key: "kind", label: "by kind", of: (r) => fbKind(r.kind)[1] }],
+      rowKey: (r) => r.id,
+      sort: "at", dir: "desc", per: 15,
+    })
+    + answerPanel(rows.find((r) => r.id === pick));
+}
+
+function answerPanel(r) {
+  if (!r) return "";
+  const draft = S.answer || {};
+  return `<div class="panel wide" data-reveal>
+    <header><h2>Answer ${esc(r.name || r.who)}</h2>
+      <span class="sub">${esc(fbKind(r.kind)[1])} \u00b7 ${ago(r.at)}</span>
+      <div class="spacer"></div>
+      <button class="iconbtn" ${act(openReport, r.id)}>&times;</button>
+    </header>
+    <div class="body">
+      <p class="quoted">${esc(r.text)}</p>
+      ${(r.answers || []).length ? `<div class="mine">${
+        r.answers.map((a) => `<div class="mreply">
+          <strong>${esc(fbStatus(a.status)[0])}</strong>
+          ${a.note ? `<p>${esc(a.note)}</p>` : ""}
+          <span class="muted">${ago(a.at)}</span></div>`).join("")}</div>` : ""}
+      <div class="field">
+        <label>Where it stands</label>
+        <div class="presets">${Object.keys(FEEDBACK_STATUS).map((k) => `
+          <button class="chip ${draft.status === k ? "on" : ""}"
+            ${act(pickStatus, k)}>${esc(fbStatus(k)[0])}</button>`).join("")}
+        </div>
+      </div>
+      <div class="field">
+        <label>Anything to say to them</label>
+        <textarea id="answote" data-search="ans" rows="3"
+          ${actv("input", answerTyped)}
+          placeholder="Optional. They will get this as it is written."
+          >${esc(draft.note || "")}</textarea>
+      </div>
+      <div class="btnrow">
+        <button class="btn primary" ${act(sendAnswer, r.id)}
+          ${!draft.status || draft.busy ? "disabled" : ""}>${
+          draft.busy ? "Sending\u2026" : "Send it"}</button>
+      </div>
+      ${draft.error ? `<p class="testline bad">${esc(draft.error)}</p>` : ""}
+      ${draft.done ? `<p class="testline ok">${esc(draft.done)}</p>` : ""}
+    </div>
+  </div>`;
+}
+
+function openReport(id) {
+  const same = S.inboxPick === id;
+  S.inboxPick = same ? "" : id;
+  S.answer = same ? {} : { status: "", note: "" };
+  render();
+}
+
+function pickStatus(k) {
+  S.answer = Object.assign({}, S.answer, { status: k, error: "", done: "" });
+  render();
+}
+
+function answerTyped(value) {
+  S.answer = Object.assign({}, S.answer, { note: value });
+}
+
+async function sendAnswer(id) {
+  const a = S.answer || {};
+  if (!a.status) return;
+  S.answer = Object.assign({}, a, { busy: true, error: "", done: "" });
+  render();
+  try {
+    const r = await post("/api/feedback/answer",
+                         { id, status: a.status, note: a.note || "" });
+    const body = await r.json();
+    if (!body.ok) {
+      S.answer = Object.assign({}, S.answer,
+                               { busy: false, error: body.error || "No." });
+    } else {
+      S.answer = { status: "", note: "", done: body.told
+        ? "Sent, and they have been mailed."
+        : "Saved. They will see it on their Support tab." };
+      S.inboxPick = "";
+      S.inboxAsked = false;
+      loadInbox();
+    }
+  } catch (e) {
+    S.answer = Object.assign({}, S.answer,
+                             { busy: false, error: "Could not reach it." });
+  }
+  render();
+}
+
+async function loadInbox() {
+  if (S.inboxAsked) return;
+  S.inboxAsked = true;
+  try {
+    const r = await fetch("/api/feedback", { cache: "no-store" });
+    const body = await r.json();
+    if (body.ok) S.inbox = body.rows || [];
+    render();
+  } catch (e) { /* the tab says it is empty, which is all it can say */ }
 }
 
 const INTERVAL_PRESETS = [2, 5, 15, 30, 60, 240, 1440];
@@ -1156,10 +1659,12 @@ function setGeneral() {
   const auto = st.auto !== false;
   const now = st.interval || 15;
   return `<div class="row2" style="align-items:start">
-    <div class="panel" data-reveal><header><h2>Automatic refresh</h2></header><div class="body">
-      <p class="hint" style="margin-top:0">The server re-reads lore, patchwork and
-      git.kernel.org on a timer, so this page stays current on its own. Responses
-      are cached, so a scheduled run is cheap and usually finishes in a second.</p>
+    <div class="panel" data-reveal><header><h2>Automatic refresh</h2>
+      <div class="spacer"></div>
+      ${info("auto", `The server re-reads lore, patchwork and git.kernel.org on
+        a timer, so this page stays current on its own. Responses are cached,
+        so a scheduled run is cheap and usually finishes in a second.`)}
+    </header><div class="body">
       <div class="switchrow">
         <label class="switch"><input type="checkbox" ${auto ? "checked" : ""}
           ${actv("change", setAuto)}><span></span></label>
@@ -1181,28 +1686,36 @@ function setGeneral() {
             Math.abs(now - m) < 0.01 ? "on" : ""}" ${act(setInterval_, m)}
             >${prettyInterval(m)}</button>`).join("")}
         </div>
-          <p class="hint">Anything from one minute to a week. Currently
-          <strong>${prettyInterval(now)}</strong>. This is yours and is
-          remembered, so signing in again, or from another machine, finds
-          the same schedule.</p>
+          <p class="hint">Currently <strong>${prettyInterval(now)}</strong>.
+          ${info("ivl", `Anything from one minute to a week is allowed. The
+            schedule is yours and is remembered, so signing in again, or from
+            another machine, finds the same one.`)}</p>
       </div>
 
       <div class="btnrow">
         <button class="btn primary" ${act(doRefresh, false)}>Refresh now</button>
         <button class="btn" ${act(doRefresh, true)}>Full rescan</button>
       </div>
-      <p class="hint">A full rescan walks every maintainer tree on git.kernel.org
-      and takes several minutes. You only need it if a commit landed somewhere
-      unusual.</p>
+      <p class="hint">Refresh now re-reads the lists and patchwork.
+      ${info("rescan", `A full rescan does that and then walks all eighty
+      maintainer trees on git.kernel.org, which takes several minutes. You
+      only need it if a commit of yours landed somewhere unusual.`)}</p>
     </div></div>
 
-    <div class="panel" data-reveal><header><h2>When a patch lands</h2></header>
+    <div class="panel" data-reveal><header><h2>When a patch lands</h2>
+      <div class="spacer"></div>
+      ${info("landmail", `A patch reaching Linus' tree is the end of the whole
+        thing, and the one part of it nobody announces: the maintainer said
+        "applied" weeks ago, and then one day the commit is simply there.
+        This is the only message Patchvane will send you about your own
+        patches. It goes to the address on your account &mdash; Profile has
+        it &mdash; after a collection finds a commit of yours in mainline
+        that was not there last time, with the subject, the commit and when
+        it landed. Switching it on now does not mean hearing about
+        everything that has already landed: what has been seen is remembered
+        either way, so you get the next one, not the back catalogue.`)}
+    </header>
     <div class="body">
-      <p class="hint" style="margin-top:0">A patch reaching Linus' tree is the
-      end of the whole thing, and the one part of it nobody announces: the
-      maintainer said "applied" weeks ago, and then one day the commit is
-      simply there. This is the only message Patchvane will send you about
-      your own patches.</p>
       <div class="switchrow">
         <label class="switch"><input type="checkbox" ${st.merged_mail ? "checked" : ""}
           ${actv("change", setMergedMail)}><span></span></label>
@@ -1212,13 +1725,6 @@ function setGeneral() {
               + "otherwise"
             : "nothing is sent"}</div></div>
       </div>
-      <p class="hint">It goes to the address on your account &mdash; Profile
-      has it &mdash; after a collection finds a commit of yours in mainline
-      that was not there last time, with the subject, the commit and when it
-      landed.
-      Switching it on now does not mean hearing about everything that has
-      already landed: what has been seen is remembered either way, so you get
-      the next one, not the back catalogue.</p>
       ${st.mail === false ? `<p class="testline bad">This server has no way to
         send mail configured, so nothing can go out even with this on.</p>` : ""}
     </div></div>
@@ -1239,8 +1745,10 @@ function setGeneral() {
             (document.documentElement.dataset.theme || "dark") === t ? "on" : ""}"
             ${act(setTheme, t)}>${t === "dark" ? "Dark" : "Light"}</button>`).join("")}
         </div>
-        <p class="hint">Remembered against your account, so it follows you to
-        another machine rather than living in this browser alone.</p>
+        <p class="hint">Remembered against your account.
+        ${info("theme", `So it follows you to another machine rather than
+        living in this browser alone, the way a setting kept in the browser
+        would.`)}</p>
       </div>
     </div></div>
   </div>`;
@@ -1277,7 +1785,8 @@ function setSupport() {
     <div class="body">
       <div class="findrow" style="margin-bottom:16px">
         <div class="findbox">
-          <input type="search" id="helpq" value="${esc(s.q || "")}"
+          <input type="search" id="helpq" data-search="help"
+                 value="${esc(s.q || "")}"
                  placeholder="What is not working? A word or two is enough"
                  spellcheck="false" autocomplete="off"
                  ${actv("input", helpTyped)}>
@@ -1323,15 +1832,19 @@ function helpList(items, s) {
   </div>`).join("");
 }
 
+/* Every keystroke redraws the answers under the box, which throws the box
+   away with them.  render() already knows how to put a search box back
+   exactly as it was -- the same caret, the same selection -- so use that
+   rather than refocusing by hand afterwards. Doing it by hand is what made
+   backspace look broken: focus was restored only if it had somehow
+   survived, and the caret was slammed to the end of the line either way,
+   so deleting from the middle deleted from the end, or did nothing. */
 function helpTyped(value) {
   S.support = Object.assign({}, S.support, { q: value, open: "" });
   /* One answer for one search is a click nobody should have to make. */
   const hits = value ? helpSearch(value) : [];
   if (hits.length === 1) S.support.open = hits[0].id;
-  render();
-  const box = $("helpq");
-  if (box && document.activeElement !== box) return;
-  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  render("help");
 }
 
 function helpOpen(id) {
@@ -1340,61 +1853,132 @@ function helpOpen(id) {
   render();
 }
 
+/* The kinds of thing people send.  Asked because the answer changes what
+   happens next -- "a number is wrong" is a different job from "this could
+   be better" -- and because the owner reading twenty of these needs to be
+   able to see the broken ones first. Asked after the writing, not before:
+   being made to classify something before describing it is how a feature
+   request ends up filed as a bug. */
+const FEEDBACK_KINDS = [
+  ["bug", "Something is broken", "\u26A0", "red"],
+  ["wrong", "A number or status looks wrong", "\u2260", "amber"],
+  ["idea", "Something could be better", "\u2726", "purple"],
+  ["question", "I could not work out how to do something", "?", "blue"],
+  ["praise", "Something to say", "\u2661", "green"],
+];
+
+const FEEDBACK_STATUS = {
+  "new": ["Not looked at yet", "grey"],
+  "seen": ["Read", "blue"],
+  "working": ["Being worked on", "amber"],
+  "fixed": ["Done", "green"],
+  "known": ["Known, not started", "purple"],
+  "wontfix": ["Not going to change", "red"],
+  "ask": ["Waiting on you", "cyan"],
+};
+
+function fbStatus(k) { return FEEDBACK_STATUS[k] || [k || "unknown", "grey"]; }
+
+function fbKind(k) {
+  return FEEDBACK_KINDS.find((x) => x[0] === k) || [k, k, "\u2022", "grey"];
+}
+
 function feedbackPanel() {
   const s = S.support || {};
-  const routes = s.routes || {};
   const text = (s.text || "").trim();
-  const nowhere = !routes.issue && !routes.mail;
+  const ready = text.length >= 10;
+  const kind = s.kind || "";
+
+  const chooser = FEEDBACK_KINDS.map(([id, label, icon, cls]) => `
+    <button class="kindbtn ${cls} ${kind === id ? "on" : ""}"
+      ${act(pickKind, id)}>
+      <span class="ki">${icon}</span>${esc(label)}</button>`).join("");
 
   return `<div class="panel wide" data-reveal>
     <header><h2>Tell us something</h2>
-      <span class="sub">a bug, or anything else</span></header>
+      <span class="sub">a bug, a wrong number, or anything else</span>
+      <div class="spacer"></div>
+      ${info("fb", `Everything sent here is written down where the person who
+        runs this signs in, so it reaches them whether or not this
+        deployment has mail or an issue tracker set up. Your address goes
+        with it, so they can come back to you, and you will see what they
+        say below.`)}</header>
     <div class="body">
       ${s.sent ? `<div class="sentnote">
-        <strong>Thank you \u2014 that went through.</strong>
-        <p>${esc(s.sent.note || (s.sent.route === "issue"
-          ? "It is in the issue tracker."
-          : "It is in the maintainer's mail."))}</p>
+        <strong>Thank you \u2014 that is written down.</strong>
+        <p>${esc(s.sent.told
+          ? "It has gone to whoever runs this, and you will hear back here."
+          : "It is waiting for whoever runs this, and you will hear back "
+            + "here.")}</p>
         ${s.sent.link ? `<a class="btn sm" href="${esc(s.sent.link)}"
           target="_blank" rel="noreferrer">See the issue \u2197</a>` : ""}
         <button class="btn ghost sm" ${act(feedbackAgain)}>Write another</button>
       </div>` : `
-      <p class="hint" style="margin-top:0">Write it however you would say it.
-      Where it should go is the next question, not this one.</p>
       <div class="field">
-        <textarea id="fbtext" rows="5" ${actv("input", feedbackTyped)}
+        <textarea id="fbtext" data-search="fb" rows="5"
+          ${actv("input", feedbackTyped)}
           placeholder="What happened, or what would be better?"
-          ${nowhere ? "disabled" : ""}>${esc(s.text || "")}</textarea>
+          >${esc(s.text || "")}</textarea>
       </div>
-      ${nowhere ? `<p class="testline bad">This deployment has no issue
-        tracker and no way to send mail configured, so there is nowhere for
-        this to go. Whoever runs it can set one up.</p>` : `
-      <div class="route ${text.length >= 10 ? "on" : ""}">
-        <p class="routeq">${text.length >= 10
-          ? "Where should it go?"
-          : "Write a line or two and this will ask where to send it."}</p>
-        <div class="routebtns">
-          <button class="btn primary" ${act(sendFeedback, "issue")}
-            ${text.length < 10 || !routes.issue || s.busy ? "disabled" : ""}>
-            <strong>It is a bug</strong>
-            <span>${routes.issue
-              ? "opens an issue in " + esc(s.repo || "the tracker")
-                + ", which is public"
-              : "no issue tracker is configured here"}</span></button>
-          <button class="btn" ${act(sendFeedback, "mail")}
-            ${text.length < 10 || !routes.mail || s.busy ? "disabled" : ""}>
-            <strong>Everything else</strong>
-            <span>${routes.mail
-              ? "goes to whoever runs this, privately"
-              : "no mail is configured here"}</span></button>
+      <div class="route ${ready ? "on" : ""}">
+        <p class="routeq">${ready
+          ? "What kind of thing is it?"
+          : "Write a line or two, and this will ask what kind of thing it is."}</p>
+        <div class="kinds">${chooser}</div>
+        <div class="btnrow">
+          <button class="btn primary" ${act(sendFeedback)}
+            ${!ready || !kind || s.busy ? "disabled" : ""}>
+            ${s.busy ? "Sending\u2026" : "Send it"}</button>
+          ${(s.routes || {}).issue && kind === "bug" ? `
+            <label class="check"><input type="checkbox"
+              ${s.alsoIssue ? "checked" : ""} ${actv("change", toggleIssue)}>
+              Also open a public issue in ${esc(s.repo || "the tracker")}</label>`
+            : ""}
         </div>
-        ${s.busy ? `<p class="hint"><span class="spin"></span> Sending\u2026</p>` : ""}
         ${s.error ? `<p class="testline bad">${esc(s.error)}</p>` : ""}
-        <p class="hint">Your address goes with it either way, so somebody can
-        come back to you. On a bug that means it is visible in the issue.</p>
-      </div>`}`}
+      </div>`}
+      ${myReports(s)}
     </div>
   </div>`;
+}
+
+/* What this person sent before, and what was said back.  Without it, a
+   report is a message dropped into a hole: the only way to find out whether
+   anybody looked is to write again. */
+function myReports(s) {
+  const rows = s.mine || [];
+  if (!rows.length) return "";
+  return `<div class="mine">
+    <h3>What you have sent</h3>
+    ${rows.map((r) => {
+      const [said, cls] = fbStatus(r.status);
+      const answers = (r.answers || []).filter((a) => a.note);
+      return `<div class="mrow">
+        <div class="mhead">
+          <span class="pill ${cls}">${esc(said)}</span>
+          <span class="muted">${esc(fbKind(r.kind)[1])}</span>
+          <div class="spacer"></div>
+          <span class="muted">${ago(r.at)}</span>
+        </div>
+        <p class="mtext">${esc(r.text)}</p>
+        ${answers.map((a) => `<div class="mreply">
+          <strong>${esc(fbStatus(a.status)[0])}</strong>
+          <p>${esc(a.note)}</p>
+          <span class="muted">${ago(a.at)}</span></div>`).join("")}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function pickKind(id) {
+  S.support = Object.assign({}, S.support,
+                            { kind: (S.support || {}).kind === id ? "" : id });
+  render();
+}
+
+function toggleIssue(on) {
+  S.support = Object.assign({}, S.support, { alsoIssue: on });
+  render();
 }
 
 function feedbackTyped(value) {
@@ -1404,24 +1988,25 @@ function feedbackTyped(value) {
   /* Only redraw when the answer to "can this be sent yet" changes.  On every
      keystroke it would rebuild the box being typed into. */
   if (was === now) return;
-  render();
-  const box = $("fbtext");
-  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  render("fb");
 }
 
 function feedbackAgain() {
-  S.support = Object.assign({}, S.support, { sent: null, text: "", error: "" });
+  S.support = Object.assign({}, S.support,
+                            { sent: null, text: "", kind: "", error: "" });
   render();
 }
 
-async function sendFeedback(route) {
+async function sendFeedback() {
   const s = S.support || {};
   const text = (s.text || "").trim();
-  if (text.length < 10) return;
+  if (text.length < 10 || !s.kind) return;
   S.support = Object.assign({}, s, { busy: true, error: "" });
   render();
   try {
-    const r = await post("/api/support/feedback", { text, route });
+    const r = await post("/api/support/feedback", {
+      text, kind: s.kind, where: S.view,
+      route: s.alsoIssue && s.kind === "bug" ? "issue" : "" });
     const body = await r.json();
     S.support = Object.assign({}, S.support, { busy: false });
     if (!body.ok) {
@@ -1429,6 +2014,11 @@ async function sendFeedback(route) {
     } else {
       S.support.sent = body;
       S.support.text = "";
+      S.support.kind = "";
+      /* Straight into their own list, so "is anybody looking at this" has
+         an answer from the moment it is sent. */
+      S.support.asked = false;
+      loadSupport();
     }
   } catch (e) {
     S.support = Object.assign({}, S.support, { busy: false,
@@ -1448,7 +2038,8 @@ async function loadSupport() {
     const r = await fetch("/api/support", { cache: "no-store" });
     const body = await r.json();
     S.support = Object.assign({}, S.support,
-                              { routes: body.routes || {}, repo: body.repo });
+                              { routes: body.routes || {}, repo: body.repo,
+                                owner: !!body.owner, mine: body.mine || [] });
     render();
   } catch (e) { /* the help still works */ }
 }
@@ -1529,15 +2120,14 @@ function setAI() {
         ? `${plural(ready.length, "provider")} ready, ${rest.length} more available`
         : `none set up yet, ${rest.length} to choose from`}</span>
       <div class="spacer"></div>
+      ${info("keys", `Add a key for any of these and the assistant can use
+        it. One is enough. Every question goes out with a digest of what this
+        dashboard collected: totals, per tree numbers, landed commits, open
+        threads and review tags. Reviewer addresses are masked before they
+        leave. No mail bodies and no credentials go with them.`)}
       ${ready.length ? `<button class="btn sm" ${act(askAI)}>Open the assistant</button>` : ""}
     </header>
     <div class="body">
-      <p class="hint" style="margin-top:0">Add a key for any of these and the
-      assistant can use it. One is enough. Every question goes out with a
-      digest of what this dashboard collected: totals, per tree numbers,
-      landed commits, open threads and review tags. Reviewer addresses are
-      masked before they leave. No mail bodies and no credentials go with
-      them.</p>
       ${done ? `<div class="providers">${done}</div>` : ""}
       ${rest.length ? `
         <button class="disclose ${open ? "on" : ""}" ${act(toggleAllModels)}>
@@ -1551,13 +2141,15 @@ function setAI() {
   ${readingPanel()}
 
   <div class="row2" style="align-items:start">
-    <div class="panel" data-reveal><header><h2>How Auto picks</h2></header>
+    <div class="panel" data-reveal><header><h2>How Auto picks</h2>
+      <div class="spacer"></div>
+      ${info("auto-pick", `On Auto the question is read for what kind of
+        question it is, and the models suited to that go first. If one is
+        rate limited or overloaded, the next takes it and the answer says
+        who ended up replying. Pick a model by name in the assistant to
+        override this; it still falls back if that one is down. Greyed out
+        below means no key, so it is skipped.`)}</header>
       <div class="body">
-      <p class="hint" style="margin-top:0">On Auto the question is read for
-      what kind of question it is, and the models suited to that go first. If
-      one is rate limited or overloaded, the next takes it and the answer says
-      who ended up replying. Pick a model by name in the assistant to override
-      this; it still falls back if that one is down.</p>
       <dl class="kv">
         ${Object.entries(ZONE_NAME).map(([z, name]) => `
           <dt>${esc(name)}</dt>
@@ -1568,7 +2160,6 @@ function setAI() {
                 esc(p.label)}</span>` : "";
             }).join(" ") || `<span class="muted">\u2014</span>`}</dd>`).join("")}
       </dl>
-      <p class="hint">Greyed out means no key, so it is skipped.</p>
     </div></div>
 
     <div class="panel" data-reveal><header><h2>What you can ask</h2></header>
@@ -1586,18 +2177,20 @@ function setAI() {
 function readingPanel() {
   const st = S.data.ai_states;
   if (!st) return "";
-  const read = S.data.patches.filter((p) => p.state_by_ai).length;
-  const firm = S.data.patches.length - read;
+  const read = work().filter((p) => p.state_by_ai).length;
+  const firm = work().length - read;
 
   return `<div class="panel wide" data-reveal>
     <header><h2>Reading the threads</h2>
-      <span class="sub">where a status came from</span></header>
+      <span class="sub">where a status came from</span>
+      <div class="spacer"></div>
+      ${info("reading", `A patch in a tree, or one somebody marked in
+        patchwork, is a recorded fact and is never second-guessed. The rest
+        is a maintainer writing in English, and phrases like "I've taken
+        this" or "send it via net-next instead" are easy to misread. On the
+        last collection a model was asked about those, and only those.`)}
+    </header>
     <div class="body">
-      <p class="hint" style="margin-top:0">A patch in a tree, or one somebody
-      marked in patchwork, is a recorded fact and is never second-guessed.
-      The rest is a maintainer writing in English, and phrases like "I've
-      taken this" or "send it via net-next instead" are easy to misread. On
-      the last collection a model was asked about those, and only those.</p>
       <div class="stats3">
         <div><b>${firm}</b><span>from a commit or patchwork</span></div>
         <div><b class="${read ? "ai" : ""}">${read}</b>
@@ -1728,15 +2321,15 @@ function setSources() {
     cache: ["local cache", "Responses kept on disk so a refresh stays cheap."],
   };
   const cards = Object.entries(meta).map(([key, [title, blurb]], i) => {
-    const info = s[key] || {};
-    const ok = info.ok !== false && !info.error;
+    const src = s[key] || {};
+    const ok = src.ok !== false && !src.error;
     return `<div class="panel" data-reveal style="--i:${i}">
       <header><h2>${esc(title)}</h2><div class="spacer"></div>
+        ${info("src-" + key, esc(blurb))}
         <span class="pill ${ok ? "green" : "red"}">${ok ? "connected" : "unavailable"}</span></header>
       <div class="body">
-        <p class="hint" style="margin:0 0 10px">${esc(blurb)}</p>
         <dl class="kv" style="grid-template-columns:150px 1fr">
-          ${Object.entries(info).filter(([k]) => k !== "ok").map(([k, v]) =>
+          ${Object.entries(src).filter(([k]) => k !== "ok").map(([k, v]) =>
             `<dt>${esc(k.replace(/_/g, " "))}</dt>
              <dd>${esc(Array.isArray(v) ? v.join(", ") : v)}</dd>`).join("")}
         </dl></div></div>`;
@@ -2005,7 +2598,94 @@ function authorResult(a) {
        rel="noreferrer">their posts on lore \u2197</a> &middot;
        <a href="${esc(a.patchwork)}" target="_blank" rel="noreferrer">on
        patchwork \u2197</a> &middot; answered in ${esc(String(a.seconds))}s</p>`
-    + mergedTable(a) + treeSweep(a, deep) + queuedPanel(a);
+    + mergedTable(a) + treeSweep(a, deep) + queuedPanel(a)
+    + pwTable(a, "taken", "Accepted by a maintainer",
+              "patchwork says it was applied; the commit may not have "
+              + "surfaced in a public tree yet")
+    + pwTable(a, "posted", "Everything they sent",
+              "every patch patchwork has from this address, whatever "
+              + "became of it");
+}
+
+/* Patchwork words a state its own way and there are more of them than this
+   page has colours for, so they are read back into the same vocabulary the
+   rest of the site uses. */
+const PW_STATE = {
+  "new": "awaiting", "under-review": "under-review", "rfc": "under-review",
+  "needs-review-ack": "needs-ack", "accepted": "accepted",
+  "mainlined": "merged", "queued": "queued",
+  "awaiting-upstream": "awaiting-upstream", "superseded": "superseded",
+  "changes-requested": "changes-requested", "rejected": "rejected",
+  "not-applicable": "not-applicable", "handled-elsewhere": "handled-elsewhere",
+  "deferred": "deferred",
+};
+
+function pwState(r) { return PW_STATE[r.state] || r.state || "awaiting"; }
+
+/* The two patchwork numbers, as lists.  They were counts and nothing else,
+   which is an odd place to stop when the tree panels below name every
+   commit one by one. */
+function pwTable(a, which, title, blurb) {
+  const rows = a[which] || [];
+  if (!a.sources.patchwork) {
+    return `<div class="panel wide" data-reveal>
+      <header><h2>${esc(title)}</h2></header><div class="body"><div class="empty">
+      <h3>patchwork did not answer</h3>
+      <p>So there is no list to show here.</p></div></div></div>`;
+  }
+  if (!rows.length) {
+    return `<div class="panel wide" data-reveal>
+      <header><h2>${esc(title)}</h2></header><div class="body"><div class="empty">
+      <h3>Nothing under this address</h3>
+      <p>Patchwork only holds what was sent to a list it follows, so work
+      posted elsewhere will not be here.</p></div></div></div>`;
+  }
+  const total = a.counts[which === "taken" ? "accepted" : "submitted"];
+  return grid("find" + which, rows, [
+    { key: "subject", label: "Subject", cls: "subject", width: "46%",
+      csv: (r) => r.subject,
+      /* Patchwork records the commit for anything that landed, so those
+         open here like every other commit on the site. */
+      render: (r) => (r.commit
+        ? `<button class="link" ${act(openCommit, r.commit, "mainline")}
+             title="Read this commit">${mark(r.subject)}</button>`
+        : mark(r.subject)) },
+    { key: "state", label: "Status", sort: (r) => state(pwState(r)).rank,
+      csv: (r) => state(pwState(r)).label,
+      render: (r) => pill(pwState(r)) },
+    { key: "project", label: "List", sort: (r) => r.list || r.project,
+      csv: (r) => r.project,
+      render: (r) => `<span class="nowrap muted">${mark(r.list || r.project)}</span>` },
+    { key: "date", label: "Sent",
+      render: (r) => `<span class="nowrap muted">${esc(r.date)}</span>` },
+  ], {
+    title,
+    subtitle: total > rows.length
+      ? `the ${rows.length} most recent of ${total}` : blurb,
+    placeholder: "Search a subject\u2026",
+    searchIn: (r) => [r.subject, r.project, r.list, r.state].join(" "),
+    fields: { state: (r) => pwState(r), list: (r) => r.list,
+              sub: (r) => subsystem(r.subject), date: (r) => r.date },
+    filters: [
+      { key: "state", all: "Any status",
+        values: (rs) => countedValues(rs, (r) => pwState(r),
+                                      (k) => state(k).label,
+                                      (a2, b2) => state(a2).rank - state(b2).rank),
+        match: (r, v) => pwState(r) === v },
+      { key: "sub", all: "Any subsystem",
+        values: (rs) => countedValues(rs, (r) => subsystem(r.subject),
+                                      (k) => k + "/"),
+        match: (r, v) => subsystem(r.subject) === v },
+      { key: "list", all: "Any list",
+        values: (rs) => countedValues(rs, (r) => r.list || r.project),
+        match: (r, v) => (r.list || r.project) === v },
+    ],
+    groups: [{ key: "state", label: "by status", of: (r) => state(pwState(r)).label },
+             { key: "list", label: "by list", of: (r) => r.list || r.project },
+             { key: "sub", label: "by subsystem", of: (r) => subsystem(r.subject) + "/" }],
+    rowKey: (r) => r.url || r.subject,
+    sort: "date", dir: "desc", per: 15,
+  });
 }
 
 function mergedTable(a) {
@@ -2064,6 +2744,15 @@ function mergedTable(a) {
       : a.merged.length + " commits",
     placeholder: "Search a commit or a subject\u2026",
     searchIn: (r) => [r.subject, r.short, r.tag, r.release].join(" "),
+    fields: { tag: (r) => r.tag, release: (r) => r.release,
+              sub: (r) => subsystem(r.subject), date: (r) => r.date },
+    filters: [
+      byColumn("release", "Any release", (r) => r.release || "not released yet"),
+      subsystemFilter(),
+      byColumn("year", "Any year", (r) => (r.date || "").slice(0, 4)),
+    ],
+    groups: [{ key: "release", label: "by release", of: (r) => r.release || "\u2014" },
+             { key: "sub", label: "by subsystem", of: (r) => subsystem(r.subject) + "/" }],
     rowKey: (r) => r.commit,
     sort: "date", dir: "desc", per: 15,
   });
@@ -2384,7 +3073,7 @@ function viewProfile() {
       <dl class="kv">
         ${acc.username ? `<dt>Username</dt><dd>${esc(acc.username)}</dd>` : ""}
         ${acc.since ? `<dt>Account since</dt><dd>${esc(ago(acc.since))}</dd>` : ""}
-        <dt>Patches tracked</dt><dd>${(S.data && S.data.patches || []).length}</dd>
+        <dt>Patches tracked</dt><dd>${S.data ? work().length : 0}</dd>
         <dt>Last collected</dt><dd>${st.generated ? esc(ago(st.generated)) : "not yet"}</dd>
         <dt>Assistant keys</dt>
         <dd>${keys.length ? keys.map((k) => esc(k.label)).join(", ")
@@ -2423,13 +3112,20 @@ function viewProfile() {
 function tabs(id, items, initial) {
   if (!S.tabs[id]) S.tabs[id] = initial || items[0][0];
   const on = S.tabs[id];
-  const bar = `<div class="tabs" data-reveal>` + items.map(([k, label]) =>
-    `<button class="${k === on ? "on" : ""}" ${act(TAB, id, k)}>${esc(label)}</button>`
-  ).join("") + `</div>`;
+  const bar = `<div class="tabs" data-tabs="${esc(id)}" data-reveal>`
+    + items.map(([k, label]) =>
+      `<button class="${k === on ? "on" : ""}" ${act(TAB, id, k)}>${
+        k === on ? `<i class="tabpill"></i>` : ""}<span>${esc(label)}</span>`
+      + `</button>`).join("") + `</div>`;
   return bar + (items.find((i) => i[0] === on) || items[0])[2]();
 }
 
-function TAB(id, k) { S.tabs[id] = k; render(); }
+/* The pill under the tabs is flown from where it was to where it is going,
+   rather than being drawn again somewhere else. */
+function TAB(id, k) {
+  S.tabs[id] = k;
+  morph(`[data-tabs="${id}"] .tabpill`, () => render());
+}
 
 /* -------------------------------------------------------------- the AI */
 
@@ -2616,7 +3312,42 @@ function drawCommit() {
       <ul class="filelist">${c.files.map((f) => `<li>
         <span class="mono">${esc(f.path)}</span>
         <span class="muted">${plural(f.changed, "line")}</span></li>`).join("")}
-      </ul></section>` : ""}`;
+      </ul></section>` : ""}
+    ${diffView(c.diff)}`;
+}
+
+/* The change itself.
+
+   A commit page that lists which files moved and how many lines, and then
+   stops, answers the least interesting question about a commit. The diff is
+   the commit. It is rendered a line at a time rather than dropped into one
+   block because a diff is unreadable without the colour: the eye finds the
+   + and the - long before it reads either. */
+function diffView(d) {
+  if (!d) return "";
+  if (!d.text) {
+    return d.why ? `<section class="thsec"><h3>The change</h3>
+      <p class="hint" style="margin:0">${esc(d.why)}.</p></section>` : "";
+  }
+  const KIND = {
+    "+": "add", "-": "del", "@": "hunk", "d": "fh", "i": "fh",
+  };
+  const rows = d.text.split("\n").map((ln) => {
+    let k = KIND[ln.charAt(0)] || "";
+    /* "---" and "+++" name the file; they are not a removed and an added
+       line, and colouring them as such makes every file look rewritten. */
+    if (ln.startsWith("---") || ln.startsWith("+++")) k = "fh";
+    else if (ln.startsWith("diff --git ") || ln.startsWith("index ")
+             || ln.startsWith("new file") || ln.startsWith("deleted file")
+             || ln.startsWith("similarity ") || ln.startsWith("rename ")) k = "fh";
+    else if (k === "d" || k === "i") k = "";
+    return `<span class="dl ${k}">${esc(ln) || "&nbsp;"}</span>`;
+  }).join("");
+
+  return `<section class="thsec"><h3>The change</h3>
+    <div class="diff">${rows}</div>
+    ${d.cut ? `<p class="hint">This is a long one, so the rest is cut. The
+      whole of it is on git.kernel.org.</p>` : ""}</section>`;
 }
 
 function closeThread() {
@@ -3102,26 +3833,51 @@ function until(iso) {
 function navCounts() {
   const d = S.data;
   if (!d) return {};
-  const k = d.kpis;
   const owed = owedWork();
   return {
     owed: owed.replies.threads.length + owed.respin.series.length,
-    patches: k.patches,
+    patches: work().length,
     outcomes: d.merged.length + owed.dropped.length,
-    discussions: d.threads.length,
+    discussions: conversations().length,
   };
 }
 
 function renderNav() {
   const counts = navCounts();
-  $("nav").innerHTML = NAV.map(([id, label, icon], i) => `
+  const nav = $("nav");
+  /* The highlight is not part of the list.  It outlives every redraw, so
+     that moving from one section to another moves one object instead of
+     turning a background off here and on there. */
+  if (!nav.querySelector(".navlist")) {
+    nav.innerHTML = `<span class="navglow" aria-hidden="true"></span>
+      <div class="navlist"></div>`;
+  }
+  nav.querySelector(".navlist").innerHTML = NAV.map(([id, label, icon]) => `
     <button class="navitem ${S.view === id ? "active" : ""} ${
       !S.data && NO_DATA_NEEDED[id] ? "ready" : ""}" ${act(go, id)}>
       <span class="ico">${icon}</span><span class="lb">${esc(label)}</span>
-      ${counts[id] !== undefined ? `<span class="count">${counts[id]}</span>`
-        : `<span class="kbd">${i + 1}</span>`}
+      ${counts[id] !== undefined ? `<span class="count">${counts[id]}</span>` : ""}
     </button>`).join("");
+  placeGlow();
 }
+
+/* Put the highlight behind whichever section is open.  Settings and Profile
+   are not in the sidebar, so there it has nothing to sit under and gets out
+   of the way rather than pointing at the wrong thing. */
+function placeGlow() {
+  const nav = $("nav");
+  const glow = nav && nav.querySelector(".navglow");
+  if (!glow) return;
+  const on = nav.querySelector(".navitem.active");
+  if (!on) { glow.classList.remove("on"); return; }
+  glow.style.setProperty("--x", on.offsetLeft + "px");
+  glow.style.setProperty("--y", on.offsetTop + "px");
+  glow.style.setProperty("--w", on.offsetWidth + "px");
+  glow.style.setProperty("--h", on.offsetHeight + "px");
+  glow.classList.add("on");
+}
+
+window.addEventListener("resize", placeGlow);
 
 const VIEWS = {
   overview:    ["Overview", "where everything stands today", viewOverview],
@@ -3145,9 +3901,15 @@ function go(view) {
   if (S.view === view) { render(); return; }
   S.view = view;
   location.hash = view;
-  transition(() => render());
-  const content = document.querySelector(".content");
-  if (content) content.scrollTo({ top: 0, behavior: MOTION.ok ? "smooth" : "auto" });
+  /* The top of the new section is taken while the page is mid-flow, rather
+     than scrolled to afterwards.  A smooth scroll racing the transition is
+     two movements at once, and the eye reads that as a stutter. */
+  transition(() => {
+    render();
+    const content = document.querySelector(".content");
+    if (content) content.scrollTop = 0;
+    if (window.scrollY) window.scrollTo(0, 0);
+  });
 }
 
 function signOut() { snapDrop(); location.href = "/logout"; }
@@ -3759,33 +4521,17 @@ function toggleTheme() {
   setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 }
 
+/* Escape only.  This was a page of single-letter shortcuts -- a for the
+   assistant, r to refresh, digits for the sections -- which meant every
+   stray keypress outside a text box did something, and the only way to
+   find out what was a card in the corner explaining them. Escape is not a
+   shortcut in that sense: it is how anything that opened over the page
+   gets closed, and nobody has to be told. */
 function keys(e) {
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-  if (e.key === "Escape") {
-    if ($("help").classList.contains("on")) { $("help").classList.remove("on"); return; }
-    if ($("thread").classList.contains("open")) { closeThread(); return; }
-    if ($("ai").classList.contains("open")) { closeAI(); return; }
-    if (typing) e.target.blur();
-    return;
-  }
-  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.key === "/") {
-    const box = document.querySelector("[data-search]");
-    if (box) { e.preventDefault(); box.focus(); }
-  } else if (e.key === "a") { e.preventDefault(); askAI(); }
-  else if (e.key === "r") { e.preventDefault(); doRefresh(false); }
-  else if (e.key === "t") { toggleTheme(); }
-  else if (e.key === "?") { $("help").classList.toggle("on"); }
-  else if (e.key === "g") {
-    e.preventDefault();
-    go("discover");
-    /* Straight into the box: pressing g to look somebody up and then having
-       to reach for the mouse is half a shortcut. */
-    setTimeout(() => {
-      const box = document.querySelector("input[data-find]");
-      if (box) box.focus();
-    }, 60);
-  } else if (/^[1-7]$/.test(e.key)) { go(NAV[+e.key - 1][0]); }
+  if (e.key !== "Escape") return;
+  if ($("thread").classList.contains("open")) { closeThread(); return; }
+  if ($("ai").classList.contains("open")) { closeAI(); return; }
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) e.target.blur();
 }
 
 async function boot() {
@@ -3806,8 +4552,6 @@ async function boot() {
   $("thclose").addEventListener("click", closeThread);
   $("thscrim").addEventListener("click", closeThread);
   $("aisend").addEventListener("click", sendAI);
-  $("helpopen").addEventListener("click", () => $("help").classList.add("on"));
-  $("helpclose").addEventListener("click", () => $("help").classList.remove("on"));
   /* The corner menu: everything about you rather than about your patches,
      which is why Settings moved here off the sidebar. Sign out lives behind
      it too, rather than one stray click away from ending the session. */

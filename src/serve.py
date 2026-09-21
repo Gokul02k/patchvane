@@ -104,6 +104,7 @@ SECRETS = os.path.join(DATA_DIR, "secrets.json")
 # who uses this.
 PEOPLE = os.path.join(DATA_DIR, "people")
 accounts.configure(PEOPLE)
+feedback.configure(DATA_DIR)
 
 APP = CONFIG.get("app_name", "Patchvane")
 
@@ -1116,6 +1117,59 @@ def ai_catalogue(email: str = "", keys=None) -> list:
     return out
 
 
+def kernel_now() -> list:
+    """Where the kernel itself is up to, in the digest, as facts.
+
+    Asked what comes after v7.3-rc4 a model answered "v7.4", which is what
+    happens when a question about kernel version numbers is answered from
+    whatever the model remembers rather than from the tree. The rule is not
+    hard -- inside a cycle the next tag is the next rc, and after the last
+    rc comes the release -- but it has to be told, and the numbers have to
+    be today's, not the ones current when the model was trained."""
+    try:
+        tags = discover.releases()
+    except Exception:
+        # A digest without release lines is a digest; one that raises on the
+        # way to the model is no answer at all.
+        return []
+    every = [n for n, _ in tags.get("tags", [])]
+    if not every:
+        return []
+    latest = every[-1]
+    shipped = [n for n, _ in tags.get("final", [])]
+    out = ["", "## The kernel itself, right now",
+           "- the newest tag in Linus' tree is %s" % latest,
+           "- the newest finished release is %s" % (shipped[-1] if shipped
+                                                    else "unknown")]
+    m = re.match(r"^(v\d+)\.(\d+)-rc(\d+)$", latest)
+    if m:
+        major, minor, n = m.group(1), int(m.group(2)), int(m.group(3))
+        series = "%s.%d" % (major, minor)
+        after = "%s.%d" % (major, minor + 1)
+        out += [
+            "- %s is the release being built. It is at rc%d and is not out "
+            "yet." % (series, n),
+            "- the tag after %s is %s-rc%d. When Linus decides the rcs are "
+            "done, the one after that is %s itself, with no rc. So the "
+            "answer to \"what comes next\" is %s-rc%d or %s -- it is not %s. "
+            "The number before the dot and the number after it do not change "
+            "part-way through a cycle."
+            % (latest, series, n + 1, series, series, n + 1, series, after),
+            "- the merge window for %s has already closed, so new features "
+            "posted now are aimed at %s: they sit in a maintainer tree and "
+            "in linux-next until that window opens. Fixes still go into %s "
+            "during the rcs." % (series, after, series),
+        ]
+    elif re.match(r"^v\d+\.\d+$", latest):
+        out.append("- %s is out. The merge window for the next release is "
+                   "open or about to open, and the next tag will be its "
+                   "-rc1." % latest)
+    out.append("- answer any question about kernel version numbers from "
+               "these lines. Do not answer it from memory: this tree moves, "
+               "and these are today's tags.")
+    return out
+
+
 def build_digest(d: dict) -> str:
     """A compact picture of the whole contribution, small enough to send with
     every question.  Built from the redacted copy, so a model provider never
@@ -1123,18 +1177,34 @@ def build_digest(d: dict) -> str:
     if not d:
         return "No data has been collected yet."
     k = d.get("kpis", {})
+    rows = current_patches(d.get("patches", []))
+    n = lambda *names: sum(1 for p in rows if p["state"] in names)
     out = ["# Upstream contribution status for %s" % d["profile"]["name"],
-           "Collected %s." % d.get("generated", "")[:19], "", "## Totals"]
+           "Collected %s." % d.get("generated", "")[:19]]
+    out += kernel_now()
+    # Counted the way the dashboard counts, so an answer can never be at
+    # odds with the screen the question was asked in front of.
+    out += ["", "## Totals",
+            "Each patch is counted once, at the version that stands for it. "
+            "A v1 replaced by a v2 is one patch, not two, and it is not a "
+            "dropped patch.",
+            "- patches written: %d" % len(rows),
+            "- mails sent to post them: %d"
+            % sum(p.get("_sent", 1) for p in rows),
+            "- in mainline: %d" % n("merged"),
+            "- in linux-next: %d" % n("in-next"),
+            "- in a maintainer tree: %d" % n("in-tree"),
+            "- accepted: %d" % n("accepted", "queued", "awaiting-upstream"),
+            "- carrying a review tag: %d" % n("reviewed"),
+            "- under discussion: %d" % n("under-review", "needs-ack"),
+            "- no reply yet: %d" % n("awaiting"),
+            "- changes requested, so a new version is owed: %d"
+            % n("changes-requested"),
+            "- rejected: %d" % n("rejected"),
+            "- not applicable or handled elsewhere: %d"
+            % n("not-applicable", "handled-elsewhere", "deferred")]
     for label, key in [
-            ("patches posted", "patches"), ("series", "series"),
-            ("merged in mainline", "merged"), ("in linux-next", "in_next"),
-            ("in a maintainer tree", "in_tree"), ("accepted", "accepted"),
-            ("carrying a review tag", "reviewed"),
-            ("under discussion", "under_review"),
-            ("no reply yet", "awaiting"),
-            ("changes requested", "changes_requested"),
-            ("superseded", "superseded"), ("rejected", "rejected"),
-            ("not applicable", "not_applicable"),
+            ("series", "series"),
             ("review tags received", "review_tags"),
             ("people who replied", "reviewers"),
             ("threads needing a reply from me", "waiting_on_us"),
@@ -1180,20 +1250,48 @@ def build_digest(d: dict) -> str:
                        % (n.get("state"), n.get("title"), n.get("detail"),
                           n.get("next", "")))
 
-    out += ["", "## Every patch (subject | tree | status | version | posted "
-            "| replies)"]
-    for p in d.get("patches", []):
+    # One entry per patch, at the version that speaks for it, which is what
+    # the dashboard shows.  Listing the superseded v1 alongside its v2 made
+    # the model report work as dropped that had in fact landed, and count
+    # the same patch twice when asked how much there was.
+    rows = current_patches(d.get("patches", []))
+    out += ["", "## Every patch, counted once (subject | tree | status | "
+            "version | posted | replies)",
+            "There are %d patches. %d of them were sent more than once; only "
+            "the version that stands is listed, with how many rounds it "
+            "took." % (len(rows), sum(1 for p in rows if p.get("_sent", 1) > 1))]
+    for p in rows:
         # The version matters for the commonest question there is: someone
         # asks what to change in the next spin, and the answer depends on
         # which spin they are on.
         v = p.get("version") or 1
-        top = p.get("latest_version") or v
-        ver = "v%s%s" % (v, " (latest is v%s)" % top if top != v else "")
+        sent = p.get("_sent", 1)
+        ver = "v%s%s" % (v, " (%d rounds so far)" % sent if sent > 1 else "")
         out.append("- %s | %s | %s | %s | %s | %d"
                    % (p["subject"], p.get("tree_hint") or p.get("list") or "?",
                       p["state"], ver, (p.get("date") or "")[:10],
                       p.get("reply_count", 0)))
     return "\n".join(out)
+
+
+def current_patches(patches: list) -> list:
+    """One row per patch rather than one per posting.
+
+    The same rule the page uses: the version that landed if any did, else
+    the newest sent."""
+    groups = {}
+    for p in patches:
+        groups.setdefault(p.get("key") or p.get("msgid") or p["subject"],
+                          []).append(p)
+    out = []
+    for rows in groups.values():
+        rows = sorted(rows, key=lambda q: (q.get("version") or 1,
+                                           q.get("date") or ""))
+        landed = [q for q in rows if q.get("landed")]
+        speaks = dict(landed[-1] if landed else rows[-1])
+        speaks["_sent"] = len(rows)
+        out.append(speaks)
+    return sorted(out, key=lambda q: q.get("date") or "", reverse=True)
 
 
 STOPWORDS = set("""a an and are as at be but by can could did do does for from
@@ -1306,6 +1404,23 @@ How to answer:
 - You know kernel workflow: a patch goes posted -> reviewed -> applied to a
   maintainer tree -> linux-next -> mainline. maintainer-netdev.rst caps
   outstanding patches per tree. Superseded means a later version replaced it.
+
+On numbers. The digest counts each patch once, at the version that stands
+for it. Use those totals as they are written. Do not add the figures up
+into some other number and report that instead, and do not count a patch
+again because it was sent twice: a v1 replaced by a v2 is one patch, and it
+is not a patch that was dropped. If you are asked for a number the digest
+does not state, say which numbers it does state rather than deriving one
+and presenting it as fact.
+
+On kernel version numbers. The digest opens with the tags that are in
+Linus' tree today. Answer from those. Releases run vX.Y-rc1, -rc2, and so
+on, and the release vX.Y comes after the last rc of that cycle -- so the
+tag after v7.3-rc4 is v7.3-rc5, and eventually v7.3. Neither X nor Y
+changes part-way through a cycle, and v7.4 is not the answer to what
+follows v7.3-rc4. If the digest has no tags in it, say the release data
+could not be read rather than answering from memory; your memory of which
+kernel is current is out of date by construction.
 - Reviewer addresses reach you masked, as a***@domain. Never try to
   reconstruct one, and never print one.
 - Never invent a commit hash, a maintainer name or a review tag.
@@ -2082,9 +2197,22 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/support":
             # Which ways out work here, asked before the choice is put in
             # front of anybody, so nobody picks a route that was never going
-            # to carry their message.
+            # to carry their message.  Along with what this person has sent
+            # before and what was said back, because a report nobody can
+            # follow up on is a report nobody sends twice.
             self.json_out(200, {"ok": True, "routes": feedback.routes(),
-                                "repo": feedback.REPO})
+                                "repo": feedback.REPO,
+                                "owner": feedback.is_owner(me),
+                                "mine": feedback.mine(me)})
+        elif path == "/api/feedback":
+            # Everybody's reports.  One address may read these: this is
+            # somebody's deployment, not a product with a support desk.
+            if not feedback.is_owner(me):
+                self.json_out(403, {"ok": False, "error": "Not yours."})
+                return
+            self.json_out(200, {"ok": True, "rows": feedback.everything(),
+                                "statuses": feedback.STATUSES,
+                                "kinds": feedback.KINDS})
         elif path == "/api/ai/chats":
             self.json_out(200, {"ok": True, "chats": chat_list(me)})
         elif path == "/api/ai/chat":
@@ -2282,13 +2410,34 @@ class Handler(BaseHTTPRequestHandler):
                                     "Give it a while."})
                 return
             form = self.body()
-            out = feedback.deliver((form.get("text") or ""),
-                                   (form.get("route") or "").strip(),
-                                   who=me, log=log)
+            card = accounts.by_email(me) or {}
+            out = feedback.deliver(
+                (form.get("text") or ""),
+                (form.get("kind") or "").strip(),
+                who=me, name=" ".join(filter(None, [card.get("first", ""),
+                                                   card.get("last", "")])),
+                where=(form.get("where") or "").strip(),
+                route=(form.get("route") or "").strip(), log=log)
             log("feedback from %s: %s"
                 % (quiet_addr(me),
-                   "%s via %s" % ("sent", out.get("route")) if out.get("ok")
-                   else "not sent (%s)" % out.get("error")))
+                   "written down (%s)" % out.get("kind") if out.get("ok")
+                   else "not taken (%s)" % out.get("error")))
+            self.json_out(200 if out.get("ok") else 400, out)
+        elif path == "/api/feedback/answer":
+            if not feedback.is_owner(me):
+                self.json_out(403, {"ok": False, "error": "Not yours."})
+                return
+            form = self.body()
+            out = feedback.answer((form.get("id") or "").strip(),
+                                  (form.get("status") or "").strip(),
+                                  (form.get("note") or ""), by=me)
+            if out.get("ok"):
+                # Telling them is the point of answering.  It can fail --
+                # this server may have no mail -- and that does not undo
+                # the answer, so it is reported rather than raised.
+                out["told"] = feedback.tell_them(
+                    out["report"], (form.get("status") or "").strip(),
+                    (form.get("note") or ""), log=log)
             self.json_out(200 if out.get("ok") else 400, out)
         elif path == "/api/ai/chat":
             form = self.body()

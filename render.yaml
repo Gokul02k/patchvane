@@ -44,14 +44,23 @@ services:
       # https://patchvane.onrender.com -- no trailing slash.
       - key: PATCHVANE_URL
         sync: false
-      # Settings > Support. Without these the tab still answers questions but
-      # has nowhere to send a report, and says so. The token needs nothing
-      # beyond issues:write on the one repository named here.
+      # Whoever runs this. Reports written on Settings > Support are kept in
+      # the data repository either way; this address is the one that gets a
+      # Feedback tab to read and answer them, and the one they are mailed
+      # to. Without it the reports are still kept, but nobody can read them
+      # from inside the site.
+      - key: PATCHVANE_OWNER
+        sync: false
+      # Settings > Support. Optional: a report is written down whether or
+      # not these are set. They only decide whether a bug can also be filed
+      # as a public issue. The token needs nothing beyond issues:write on
+      # the one repository named here.
       - key: PATCHVANE_GITHUB_REPO
         sync: false
       - key: PATCHVANE_GITHUB_TOKEN
         sync: false
-      # Where ordinary feedback goes, as opposed to bugs.
+      # Where feedback is mailed, if it should go somewhere other than
+      # PATCHVANE_OWNER.
       - key: PATCHVANE_FEEDBACK_EMAIL
         sync: false
       # The free plan has no disk that survives anything, and Render restarts

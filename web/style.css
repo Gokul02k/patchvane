@@ -40,17 +40,26 @@
      slowly, which reads as weight settling rather than a thing stopping.
      --ease-spring overshoots a little and is for something appearing that
      wants to be noticed.  --ease-bothways is for anything that has to move
-     and come back, where a decelerating curve looks lopsided. */
-  --ease:          cubic-bezier(.16, .84, .28, 1);
-  --ease-spring:   cubic-bezier(.34, 1.4, .64, 1);
-  --ease-bothways: cubic-bezier(.65, 0, .35, 1);
+     and come back, where a decelerating curve looks lopsided.
 
-  /* Under 120ms reads as instant, over 500ms reads as waiting. */
-  --t-quick: .13s;
-  --t-fast:  .22s;
-  --t-base:  .34s;
-  --t-slow:  .52s;
-  --t-lazy:  .78s;
+     They are all long-tailed on purpose.  A curve that spends most of its
+     time arriving is what makes movement read as something flowing into
+     place rather than something being teleported and then stopped: the eye
+     is given a path to follow, and never a frame where a thing is moving
+     fast enough to smear.  --ease-flow is the slowest of them, for
+     anything large enough that the whole screen moves with it. */
+  --ease:          cubic-bezier(.19, 1, .22, 1);
+  --ease-spring:   cubic-bezier(.22, 1.14, .36, 1);
+  --ease-bothways: cubic-bezier(.62, .01, .26, 1);
+  --ease-flow:     cubic-bezier(.24, .92, .16, 1);
+
+  /* Under 120ms reads as instant, over 700ms reads as waiting.  The three
+     in the middle are where nearly everything lives. */
+  --t-quick: .14s;
+  --t-fast:  .24s;
+  --t-base:  .4s;
+  --t-slow:  .62s;
+  --t-lazy:  .9s;
 
   /* A loop that runs while something is happening is not an interaction
      and does not belong on the scale above: it wants to read as patient
@@ -58,7 +67,13 @@
   --t-loop: 1s;
 
   /* Dealt out rather than snapping in all together. */
-  --stagger: 42ms;
+  --stagger: 46ms;
+
+  /* How much of a thing's movement is carried by going out of focus.  A
+     few pixels of blur along the direction of travel is what separates
+     something flowing in from something sliding in, and it is cheap:
+     only ever on the way in, and never on something already at rest. */
+  --blur-in: 9px;
 }
 
 html[data-theme="light"] {
@@ -137,7 +152,31 @@ code { font-family: var(--mono); font-size: .92em;
 
 /* --------------------------------------------------------------- layout */
 
-.shell { display: grid; grid-template-columns: var(--sidebar) 1fr; height: 100vh; }
+.shell { display: grid; grid-template-columns: var(--sidebar) 1fr; height: 100vh;
+  position: relative; isolation: isolate; }
+
+/* Two very faint washes of colour, drifting slowly behind everything.
+
+   It is there to stop the background reading as a flat sheet: with it,
+   panels look like they are floating on something, and movement across
+   the page has a field to move through. At six per cent it is below the
+   threshold of being noticed as an effect and above the threshold of
+   being felt, which is the whole intention. */
+.shell::before {
+  content: ""; position: absolute; inset: -20%; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 22% 28%,
+      color-mix(in srgb, var(--blue) 60%, transparent), transparent 70%),
+    radial-gradient(34% 38% at 78% 72%,
+      color-mix(in srgb, var(--cyan) 55%, transparent), transparent 70%);
+  opacity: .06; filter: blur(46px);
+  animation: drift 44s var(--ease-bothways) infinite;
+}
+@keyframes drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(2.5%, -2%, 0) scale(1.06); }
+  66%      { transform: translate3d(-2%, 2.5%, 0) scale(1.03); }
+}
 
 .sidebar {
   background: var(--bg-2);
@@ -178,22 +217,47 @@ code { font-family: var(--mono); font-size: .92em;
 .wordmark i { font-style: normal; font-size: 10.5px; font-weight: 500;
   color: var(--ink-3); letter-spacing: .01em; }
 
-nav { display: flex; flex-direction: column; gap: 2px; }
+nav { position: relative; }
+.navlist { display: flex; flex-direction: column; gap: 2px; }
+
+/* One highlight for the whole sidebar, which slides from the section you
+   were in to the one you asked for.  Drawn once and moved, rather than
+   switched off under one item and on under another: a thing that travels
+   says where you came from, and two things blinking says nothing. */
+.navglow {
+  position: absolute; left: 0; top: 0;
+  width: var(--w, 100%); height: var(--h, 38px); border-radius: var(--r-sm);
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--blue) 16%, var(--panel-2)), var(--panel-2) 62%);
+  /* Both axes, because the sidebar lies down along the bottom of a phone
+     and the same highlight has to slide sideways there. */
+  transform: translate3d(var(--x, 0px), var(--y, 0px), 0);
+  opacity: 0; pointer-events: none;
+  transition: transform var(--t-base) var(--ease-spring),
+              width var(--t-base) var(--ease-spring),
+              height var(--t-base) var(--ease-spring),
+              opacity var(--t-fast) var(--ease);
+  will-change: transform, width, height;
+}
+.navglow.on { opacity: 1; }
+.navglow::before {
+  content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--blue), var(--cyan));
+}
 
 .navitem {
   display: flex; align-items: center; gap: 11px;
   width: 100%; padding: 9px 11px; border: 0; border-radius: var(--r-sm);
   background: transparent; color: var(--ink-2); cursor: pointer;
   font: inherit; font-size: 13.5px; font-weight: 500; text-align: left;
-  position: relative; transition: background var(--t-quick), color var(--t-quick);
+  position: relative; z-index: 1;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.navitem:hover { background: var(--panel-2); color: var(--ink); }
-.navitem.active { background: var(--panel-2); color: var(--ink); font-weight: 600; }
-.navitem.active::before {
-  content: ""; position: absolute; left: -12px; top: 9px; bottom: 9px; width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, var(--blue), var(--cyan));
-}
+.navitem:hover { background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  color: var(--ink); }
+.navitem.active { color: var(--ink); font-weight: 600; background: transparent; }
+.navitem.active:hover { background: transparent; }
 .navitem .ico { width: 17px; text-align: center; font-size: 14px; opacity: .85; }
 .navitem .lb { flex: 1; }
 .navitem .count {
@@ -201,24 +265,6 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   background: var(--panel-3); padding: 1px 7px; border-radius: 20px;
 }
 .navitem.active .count { color: var(--ink); }
-.navitem .kbd { opacity: 0; transition: opacity var(--t-quick); }
-.navitem:hover .kbd { opacity: 1; }
-
-.kbd {
-  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
-  background: var(--panel-2); border: 1px solid var(--line);
-  border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; line-height: 16px;
-  display: inline-block; min-width: 18px; text-align: center;
-}
-
-.sidefoot { margin-top: auto; padding-top: 14px; }
-.hint-btn {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  background: transparent; border: 1px solid var(--line); border-radius: var(--r-sm);
-  color: var(--ink-3); font: inherit; font-size: 12px; padding: 7px 10px;
-  cursor: pointer; transition: border-color var(--t-quick), color var(--t-quick);
-}
-.hint-btn:hover { border-color: var(--line-2); color: var(--ink-2); }
 
 .app { display: flex; flex-direction: column; min-width: 0; }
 
@@ -251,8 +297,13 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   width: 34px; height: 34px; flex: none; display: grid; place-items: center;
   border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--panel); color: var(--ink-2); cursor: pointer; font-size: 15px;
-  transition: background var(--t-quick), color var(--t-quick), border-color var(--t-quick);
+  transition: background var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              transform var(--t-base) var(--ease-spring);
 }
+.iconbtn:active { transform: scale(.94);
+  transition: transform var(--t-quick) ease-out; }
 .iconbtn:hover { background: var(--panel-2); color: var(--ink); border-color: var(--line-2); }
 .iconbtn.spin { animation: spin var(--t-loop) linear infinite; color: var(--blue); }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -263,7 +314,8 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   font: inherit; font-size: 13px; font-weight: 600; color: #fff;
   background: linear-gradient(135deg, var(--blue), #7c5cff);
   box-shadow: 0 6px 18px -8px rgba(76,141,255,.9);
-  transition: transform var(--t-quick), box-shadow var(--t-quick);
+  transition: transform var(--t-base) var(--ease-spring),
+              box-shadow var(--t-base) var(--ease);
 }
 .aibtn:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px rgba(76,141,255,1); }
 .sparkle { font-size: 12px; animation: twinkle 3s ease-in-out infinite; }
@@ -289,8 +341,11 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 
 .content { flex: 1; overflow-y: auto; padding: 22px; display: flex;
   flex-direction: column; gap: 16px; }
-.content.in { animation: rise var(--t-base) var(--ease); }
-@keyframes rise { from { opacity: 0; transform: translateY(7px); } }
+.content.in { animation: rise var(--t-slow) var(--ease-flow); }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px) scale(.995);
+         filter: blur(var(--blur-in)); }
+}
 
 .split { display: grid; grid-template-columns: minmax(0,1fr) 336px; gap: 16px;
   align-items: start; }
@@ -307,7 +362,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden;
 }
 .panel > header {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 13px 16px; border-bottom: 1px solid var(--line);
 }
 .panel > header h2 { font-size: 13.5px; letter-spacing: -.005em; }
@@ -327,7 +382,9 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   padding: 15px 16px 14px; border-radius: var(--r);
   border: 1px solid var(--line); background: var(--panel);
   box-shadow: var(--shadow);
-  transition: transform var(--t-quick) var(--ease), border-color var(--t-quick), box-shadow var(--t-quick);
+  transition: transform var(--t-base) var(--ease-spring),
+              border-color var(--t-fast) var(--ease),
+              box-shadow var(--t-base) var(--ease);
 }
 .kpi::before {
   content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
@@ -338,7 +395,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   pointer-events: none;
   width: 110px; height: 110px; border-radius: 50%;
   background: radial-gradient(circle, var(--c, var(--blue)), transparent 68%);
-  opacity: .11; transition: opacity var(--t-quick);
+  opacity: .11; transition: opacity var(--t-base) var(--ease);
 }
 .kpi:hover { transform: translateY(-2px); border-color: var(--line-2); }
 .kpi:hover::after { opacity: .2; }
@@ -386,10 +443,14 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   background: var(--panel-2); color: var(--ink);
   font: inherit; font-size: 13px; font-weight: 550;
   padding: 8px 15px; cursor: pointer;
-  transition: background var(--t-quick), border-color var(--t-quick), transform var(--t-quick);
+  transition: background var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              transform var(--t-base) var(--ease-spring);
 }
 .btn:hover { background: var(--panel-3); border-color: var(--line-2); }
-.btn:active { transform: scale(.985); }
+/* Squashes quickly under the finger and comes back slowly, which is the
+   difference between a button that gives and a button that flickers. */
+.btn:active { transform: scale(.97); transition: transform var(--t-quick) ease-out; }
 .btn.primary {
   border: 0; color: #fff;
   background: linear-gradient(135deg, var(--blue), #6f6bff);
@@ -404,7 +465,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   display: inline-flex; align-items: center; gap: 7px;
   border: 1px solid var(--line); border-radius: 20px; background: transparent;
   color: var(--ink-2); font: inherit; font-size: 12.5px; font-weight: 550;
-  padding: 5px 13px; cursor: pointer; transition: all var(--t-quick);
+  padding: 5px 13px; cursor: pointer; transition: all var(--t-fast) var(--ease);
 }
 .chip b { font-size: 11px; font-weight: 700; color: var(--ink-3); }
 .chip:hover { border-color: var(--line-2); color: var(--ink); }
@@ -421,13 +482,24 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   background: var(--panel); border: 1px solid var(--line); width: fit-content;
   max-width: 100%; overflow-x: auto; }
 .tabs button {
-  border: 0; border-radius: 7px; background: transparent; color: var(--ink-2);
+  position: relative; border: 0; border-radius: 7px; background: transparent;
+  color: var(--ink-2);
   font: inherit; font-size: 13px; font-weight: 550; padding: 6px 15px;
-  cursor: pointer; white-space: nowrap; transition: background var(--t-quick), color var(--t-quick);
+  cursor: pointer; white-space: nowrap;
+  transition: color var(--t-fast) var(--ease);
 }
 .tabs button:hover { color: var(--ink); }
-.tabs button.on { background: var(--panel-2); color: var(--ink); font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--line); }
+.tabs button.on { color: var(--ink); font-weight: 600; }
+
+/* The same idea as the sidebar's highlight, and the same reason: the tab
+   you pressed is where the one you left went, so it travels.  It lives
+   inside the button it belongs to and is flown from its old position by
+   morph() in ui.js, which is what lets it cross a gap it is not in. */
+.tabpill {
+  position: absolute; inset: 0; border-radius: 7px;
+  background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.tabs button > span { position: relative; }
 
 /* ---------------------------------------------------------------- tables */
 
@@ -464,7 +536,7 @@ th.sortable:hover { color: var(--ink); }
 th .arrow { font-size: 8px; margin-left: 4px; color: var(--blue); }
 tbody td { padding: 11px 16px; border-bottom: 1px solid var(--line);
   vertical-align: top; font-size: 13px; }
-tbody tr { transition: background var(--t-quick); }
+tbody tr { transition: background var(--t-fast) var(--ease); }
 tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
 tbody tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -656,16 +728,22 @@ dl.kv dt:last-of-type, dl.kv dd:last-of-type { border-bottom: 0; }
 /* ------------------------------------------------------------- assistant */
 
 .scrim { position: fixed; inset: 0; background: rgba(3,6,12,.55); z-index: 90;
-  opacity: 0; pointer-events: none; transition: opacity var(--t-fast);
-  backdrop-filter: blur(2px); }
-.scrim.on { opacity: 1; pointer-events: auto; }
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--t-base) var(--ease),
+              backdrop-filter var(--t-slow) var(--ease);
+  backdrop-filter: blur(0px); }
+.scrim.on { opacity: 1; pointer-events: auto; backdrop-filter: blur(7px); }
 
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: 92vw;
   z-index: 100; display: flex; flex-direction: column;
   background: var(--bg-2); border-left: 1px solid var(--line);
   box-shadow: -24px 0 60px -30px rgba(0,0,0,.85);
-  transform: translateX(102%); transition: transform var(--t-base) var(--ease);
+  /* Leaves and arrives on a long curve, and is very slightly narrower on
+     the way in, so that it reads as a panel swinging into place rather
+     than a rectangle being pushed across the screen. */
+  transform: translateX(102%) scale(.985); transform-origin: right center;
+  transition: transform var(--t-slow) var(--ease-flow);
 }
 .drawer.open { transform: none; }
 .drawer > header { display: flex; align-items: center; gap: 11px;
@@ -723,21 +801,6 @@ dl.kv dt:last-of-type, dl.kv dd:last-of-type { border-bottom: 0; }
 .aiform textarea:focus { outline: none; border-color: var(--blue); box-shadow: var(--glow); }
 .aiform .btn { padding: 9px 14px; }
 
-/* ------------------------------------------------------------- shortcuts */
-
-.help { position: fixed; inset: 0; z-index: 110; display: none;
-  place-items: center; background: rgba(3,6,12,.6); backdrop-filter: blur(3px); }
-.help.on { display: grid; }
-.helpcard { width: 380px; max-width: 92vw; background: var(--panel);
-  border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow);
-  animation: rise var(--t-fast) var(--ease); }
-.helpcard header { display: flex; align-items: center; padding: 14px 16px;
-  border-bottom: 1px solid var(--line); }
-.helpcard header h2 { font-size: 14px; }
-.helpcard dl { display: grid; grid-template-columns: auto 1fr; gap: 11px 16px;
-  margin: 0; padding: 16px; font-size: 12.5px; }
-.helpcard dt { text-align: right; }
-.helpcard dd { margin: 0; color: var(--ink-2); }
 
 /* ---------------------------------------------------------------- toasts */
 
@@ -747,33 +810,78 @@ dl.kv dt:last-of-type, dl.kv dd:last-of-type { border-bottom: 0; }
   padding: 11px 15px; border-radius: var(--r-sm);
   background: var(--panel); border: 1px solid var(--line-2);
   box-shadow: var(--shadow); font-size: 12.5px; max-width: 380px;
-  animation: pop var(--t-fast) var(--ease); transition: opacity var(--t-slow);
+  animation: pop var(--t-base) var(--ease-spring);
+  transition: opacity var(--t-slow) var(--ease);
   border-left: 3px solid var(--blue);
 }
 .toast.ok { border-left-color: var(--green); }
 .toast.bad { border-left-color: var(--red); }
-@keyframes pop { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+@keyframes pop {
+  from { opacity: 0; transform: translateY(14px) scale(.96);
+         filter: blur(6px); }
+}
 
 /* A snapshot from collect.py --standalone has no server behind it. */
 body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
 
 /* ================================================================ motion */
 
+/* ------------------------------------------------- one view into another
+
+   The browser takes a picture of the page before and after, and these say
+   how one becomes the other.  Only the content column is named, so the
+   sidebar and the bar across the top are left alone and the page does not
+   appear to reload every time a section is opened: what moves is the part
+   that actually changed.
+
+   Out is quicker than in, and they overlap.  Going out on the same curve
+   as coming in leaves a moment where the screen holds two half-faded
+   copies of itself, which is what makes a cross-fade look like a fault. */
+.content { view-transition-name: canvas; }
+
+::view-transition-old(canvas) {
+  animation: flow-out var(--t-base) var(--ease-bothways) both;
+}
+::view-transition-new(canvas) {
+  animation: flow-in var(--t-slow) var(--ease-flow) both;
+}
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--t-base);
+  animation-timing-function: var(--ease);
+}
+
+@keyframes flow-out {
+  to { opacity: 0; transform: translateY(-10px) scale(.994);
+       filter: blur(calc(var(--blur-in) * .7)); }
+}
+@keyframes flow-in {
+  from { opacity: 0; transform: translateY(16px) scale(.993);
+         filter: blur(var(--blur-in)); }
+}
+
 /* Anything below arrives on its own line of the timeline.  --i is the item's
    place in a group, so a row of cards deals itself out rather than snapping
-   in all at once. */
+   in all at once.
+
+   The blur is the difference between a panel sliding up and a panel
+   settling: a thing that is still moving is a thing the eye has not
+   focused on yet, and the two arriving together is what reads as fluid.
+   It is dropped the moment the panel is at rest, because a filter on a
+   panel that is going to sit there all day costs a layer all day. */
 [data-reveal] {
   opacity: 0;
-  transform: translateY(10px) scale(.994);
+  transform: translateY(14px) scale(.988);
+  filter: blur(var(--blur-in));
   transition: opacity var(--t-slow) var(--ease),
-              transform var(--t-slow) var(--ease-spring);
+              transform var(--t-slow) var(--ease-spring),
+              filter var(--t-base) var(--ease);
   transition-delay: calc(var(--i, 0) * var(--stagger));
   /* Promoted only while it has somewhere to go.  Left on, every panel on
      the page would hold a compositor layer for the whole session. */
-  will-change: opacity, transform;
+  will-change: opacity, transform, filter;
 }
 [data-reveal].seen {
-  opacity: 1; transform: none;
+  opacity: 1; transform: none; filter: none;
   will-change: auto;
 }
 
@@ -818,7 +926,12 @@ body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
     transition-duration: .001ms !important;
     scroll-behavior: auto !important;
   }
-  [data-reveal] { opacity: 1; transform: none; }
+  [data-reveal] { opacity: 1; transform: none; filter: none; }
+  /* Nothing here may be left mid-blur: a stopped animation still has to
+     end up at something legible. */
+  .content.in, .drawer, .scrim { filter: none; backdrop-filter: none; }
+  .shell::before { animation: none; }
+  ::view-transition-old(canvas), ::view-transition-new(canvas) { animation: none; }
   .fn-band, .fn-tick { transform: scaleY(1); }
   .hm { opacity: 1; }
   .spark { stroke-dasharray: none; stroke-dashoffset: 0; }
@@ -852,7 +965,7 @@ body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
   background: linear-gradient(90deg, transparent,
               color-mix(in srgb, var(--ink) 7%, transparent), transparent);
   transform: translateX(-100%);
-  animation: shimmer 1.5s infinite;
+  animation: shimmer 1.7s var(--ease-bothways) infinite;
 }
 @keyframes shimmer { to { transform: translateX(100%); } }
 .sk-hero { height: 168px; }
@@ -882,7 +995,8 @@ body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
 .seg button {
   border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
   font: inherit; font-size: 11.5px; font-weight: 550; padding: 4px 10px;
-  border-radius: 6px; white-space: nowrap; transition: all var(--t-quick);
+  border-radius: 6px; white-space: nowrap;
+  transition: all var(--t-fast) var(--ease);
 }
 .seg button:hover { color: var(--ink); }
 .seg button.on { background: var(--panel); color: var(--ink);
@@ -893,7 +1007,15 @@ body.offline #aibtn, body.offline #refresh, body.offline .out { display: none; }
   min-width: 210px; padding: 13px; border-radius: var(--r-sm);
   background: var(--panel); border: 1px solid var(--line-2);
   box-shadow: 0 18px 44px -18px rgba(0,0,0,.8);
-  animation: rise var(--t-fast) var(--ease);
+  transform-origin: top right;
+  animation: fall var(--t-base) var(--ease-spring);
+}
+
+/* A menu is hung off the thing that opened it, so it grows from that
+   corner rather than rising from underneath like a panel does. */
+@keyframes fall {
+  from { opacity: 0; transform: translateY(-9px) scale(.96);
+         filter: blur(6px); }
 }
 .menu.wide { min-width: 320px; }
 .menu h4 { font-size: 12px; color: var(--ink-3); text-transform: uppercase;
@@ -953,7 +1075,8 @@ mark { background: color-mix(in srgb, var(--amber) 34%, transparent);
   grid-template-columns: 10px minmax(210px, 1.1fr) 3fr 52px 48px;
   padding: 12px 20px; border: 0; border-top: 1px solid var(--line);
   background: transparent; font: inherit; color: var(--ink);
-  text-align: left; cursor: pointer; transition: background var(--t-quick);
+  text-align: left; cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
 }
 .ledrow:first-child { border-top: 0; }
 .ledrow:hover { background: var(--panel-2); }
@@ -1332,7 +1455,7 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
 }
 @media (max-width: 900px) {
   :root { --sidebar: 64px; }
-  .wordmark, .navitem .lb, .navitem .count, .navitem .kbd, .sidefoot { display: none; }
+  .wordmark, .navitem .lb, .navitem .count { display: none; }
   .navitem { justify-content: center; padding: 11px 0; }
   .logo { justify-content: center; }
   .ttl p, .uname, .stamp i { display: none; }
@@ -1358,16 +1481,19 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
   }
   .sidebar .logo { display: none; }
 
-  nav { flex-direction: row; width: 100%; gap: 0; }
+  nav { width: 100%; }
+  .navlist { flex-direction: row; width: 100%; gap: 0; }
   .navitem {
     flex: 1 1 0; min-width: 0; height: 54px; padding: 0;
     justify-content: center; border-radius: 0;
   }
   .navitem .ico { font-size: 18px; opacity: 1; }
   .navitem.active { background: transparent; color: var(--blue); }
-  /* The marker moves to the top edge of the bar, where it reads as a tab
-     rather than as a bookmark hanging off the side. */
-  .navitem.active::before {
+  /* The highlight travels along the bar instead of down it, and the marker
+     moves to the top edge, where it reads as a tab rather than as a
+     bookmark hanging off the side. */
+  .navglow { background: transparent; border-radius: 0; }
+  .navglow::before {
     left: 22%; right: 22%; top: 0; bottom: auto; width: auto; height: 2px;
     border-radius: 0 0 3px 3px;
     background: linear-gradient(90deg, var(--blue), var(--cyan));
@@ -1416,7 +1542,6 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
   .search { min-width: 0; max-width: none; flex: 1 1 100%; }
 
   .drawer, .drawer.wide { width: 100%; max-width: 100%; }
-  .helpcard { margin: 0 12px; }
 }
 
 /* Safari zooms the whole page in when a field it is focusing has text below
@@ -1430,8 +1555,7 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
   .btn.sm { min-height: 34px; }
   /* Hover styling that lights up on first tap and stays lit until you touch
      something else is worse than none. */
-  .navitem:hover { background: transparent; }
-  .navitem.active:hover { background: var(--panel-2); }
+  .navitem:hover, .navitem.active:hover { background: transparent; }
 }
 .testline.waiting { color: var(--ink-3); }
 
@@ -1555,11 +1679,14 @@ body.firstrun nav .navitem.ready { opacity: 1; pointer-events: auto; }
 .whomenu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
   min-width: 168px; padding: 6px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: 0 14px 34px rgba(0,0,0,.36); }
+  box-shadow: 0 14px 34px rgba(0,0,0,.36);
+  transform-origin: top right;
+  animation: fall var(--t-base) var(--ease-spring); }
 .whomenu.hidden { display: none; }
 .whomenu button { display: block; width: 100%; padding: 9px 12px;
   background: none; border: 0; border-radius: 8px; color: var(--ink);
-  cursor: pointer; font: inherit; text-align: left; }
+  cursor: pointer; font: inherit; text-align: left;
+  transition: background var(--t-fast) var(--ease); }
 .whomenu button:hover { background: var(--panel-2); }
 
 /* The profile page. */
@@ -1744,3 +1871,213 @@ table.plain tr.main:hover, table.plain tr.main:hover + tr.sub {
 .thmsg pre { margin: 0; padding: 12px 14px; overflow-x: auto;
   font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
   word-break: break-word; font-family: var(--mono, ui-monospace, monospace); }
+
+/* ========================================================== road to mainline */
+
+/* Five stages across, narrowing left to right, each one a button that lands
+   on the patches it counted.  The bar under each stage is drawn to the
+   share that got that far, and grows into place on arrival, so the shape of
+   the run is readable before any of the numbers are. */
+.panel.road .body { padding: 0; }
+.road .steps {
+  display: grid; gap: 1px; padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  background: var(--line);
+}
+.step { background: var(--panel); display: flex; flex-direction: column; }
+.step.nil { opacity: .5; }
+
+.stepface {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  width: 100%; padding: 16px 16px 13px; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+.stepface:hover { background: var(--panel-2); }
+.stepface:focus-visible { outline: 2px solid var(--tint); outline-offset: -2px; }
+
+.stepbar {
+  display: block; width: 100%; height: 5px; margin-bottom: 9px;
+  border-radius: 3px; background: var(--line-2); overflow: hidden;
+}
+.stepbar i {
+  display: block; height: 100%; width: 0; border-radius: 3px;
+  background: var(--tint);
+  transition: width var(--t-lazy) var(--ease-flow);
+  transition-delay: calc(var(--i, 0) * 110ms + 140ms);
+}
+[data-reveal].seen .stepbar i { width: var(--w); }
+
+.stepn { font-size: 27px; font-weight: 300; letter-spacing: -.02em;
+  color: var(--tint); line-height: 1.1; }
+.stepname { font-size: 12.5px; font-weight: 600; }
+.stepblurb, .steppc { font-size: 11px; color: var(--ink-2); line-height: 1.45; }
+.steppc { margin-top: 2px; opacity: .75; }
+
+.steptail {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px;
+  margin-top: auto;
+}
+.steptail button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px 3px 7px; border-radius: 20px; cursor: pointer;
+  border: 1px solid var(--line-2); background: transparent;
+  color: var(--ink-2); font: inherit; font-size: 11px;
+  transition: color var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              transform var(--t-base) var(--ease-spring);
+}
+.steptail button:hover { color: var(--ink); border-color: var(--tint); }
+.resting .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--tint);
+}
+.binbtn { color: var(--red) !important; }
+.binbtn:hover { border-color: var(--red) !important; }
+.binbtn svg { flex: none; }
+
+@media (max-width: 720px) {
+  .road .steps { grid-template-columns: 1fr 1fr; }
+}
+
+/* ============================================================ folded detail */
+
+/* The explanation beside a heading rather than under it.  Shut, it is one
+   character; open, it is the paragraph that used to be on screen whether
+   anybody wanted it or not. */
+.infomark {
+  flex: none; width: 19px; height: 19px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--line-2); background: transparent; color: var(--ink-2);
+  font: inherit; font-size: 11px; font-weight: 600; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color var(--t-quick), border-color var(--t-quick),
+              background var(--t-quick);
+}
+.infomark:hover { color: var(--ink); border-color: var(--blue); }
+.infomark.on {
+  color: var(--bg); background: var(--blue); border-color: var(--blue);
+}
+.infobody {
+  flex-basis: 100%; margin: 10px 0 0; padding: 11px 13px;
+  border-radius: 10px; background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink-2); font-size: 12.5px; line-height: 1.65;
+  animation: unfold var(--t-base) var(--ease);
+}
+.infobody p { margin: 0 0 8px; }
+.infobody p:last-child { margin: 0; }
+.infobody em { color: var(--ink); font-style: normal; font-weight: 600; }
+.infobody code {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px;
+  padding: 1px 5px; border-radius: 4px; background: var(--panel);
+}
+/* Poured out of the mark rather than appearing under it: the clip is
+   what makes the paragraph read as unfolding rather than as a box that
+   was always there and has just been made visible. */
+@keyframes unfold {
+  from { opacity: 0; transform: translateY(-6px); filter: blur(5px);
+         clip-path: inset(0 0 100% 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+
+/* ================================================================== a diff */
+
+/* Read the way a diff is read: colour first, text second.  Each line is its
+   own element so the tint runs the full width of the box rather than
+   stopping where the text does, which is what makes a block of additions
+   legible as a block. */
+.diff {
+  display: block; overflow-x: auto; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--panel-2);
+  padding: 9px 0; font-size: 12px; line-height: 1.55;
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+  tab-size: 8;
+}
+.diff .dl {
+  display: block; padding: 0 13px; white-space: pre;
+  min-width: max-content; color: var(--ink-2);
+}
+.diff .add {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 13%, transparent);
+}
+.diff .del {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 13%, transparent);
+}
+.diff .hunk {
+  color: var(--cyan); margin: 4px 0;
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
+}
+.diff .fh { color: var(--ink-3); font-weight: 600; }
+
+/* ================================================================ feedback */
+
+/* What kind of thing this is, asked after it is written.  Buttons rather
+   than a dropdown: five options that each need a sentence to be understood
+   do not fit in a select, and hiding them behind one would put the reader
+   back to guessing which of them they are. */
+.kinds { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.kindbtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px 8px 11px; border-radius: 22px; cursor: pointer;
+  border: 1px solid var(--line-2); background: var(--panel-2);
+  color: var(--ink-2); font: inherit; font-size: 12.5px;
+  transition: color var(--t-quick), border-color var(--t-quick),
+              background var(--t-quick);
+}
+.kindbtn .ki {
+  width: 19px; height: 19px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; background: var(--panel-3);
+}
+.kindbtn:hover { color: var(--ink); border-color: var(--line-2); }
+.kindbtn.on { color: var(--ink); }
+.kindbtn.red.on    { border-color: var(--red);    background: color-mix(in srgb, var(--red) 15%, transparent); }
+.kindbtn.amber.on  { border-color: var(--amber);  background: color-mix(in srgb, var(--amber) 15%, transparent); }
+.kindbtn.purple.on { border-color: var(--purple); background: color-mix(in srgb, var(--purple) 15%, transparent); }
+.kindbtn.blue.on   { border-color: var(--blue);   background: color-mix(in srgb, var(--blue) 15%, transparent); }
+.kindbtn.green.on  { border-color: var(--green);  background: color-mix(in srgb, var(--green) 15%, transparent); }
+.kindbtn.red.on .ki    { background: var(--red);    color: var(--bg); }
+.kindbtn.amber.on .ki  { background: var(--amber);  color: var(--bg); }
+.kindbtn.purple.on .ki { background: var(--purple); color: var(--bg); }
+.kindbtn.blue.on .ki   { background: var(--blue);   color: var(--bg); }
+.kindbtn.green.on .ki  { background: var(--green);  color: var(--bg); }
+
+/* What somebody sent and what was said back.  A report with no visible
+   answer is a message dropped into a hole. */
+.mine { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
+.mine h3 { font-size: 12.5px; color: var(--ink-2); margin: 0 0 12px; }
+.mrow {
+  padding: 13px 15px; border-radius: 12px; margin-bottom: 10px;
+  border: 1px solid var(--line); background: var(--panel-2);
+}
+.mhead { display: flex; align-items: center; gap: 9px; font-size: 11.5px; }
+.mtext {
+  margin: 9px 0 0; font-size: 12.5px; line-height: 1.6;
+  white-space: pre-wrap; color: var(--ink-2);
+}
+.mreply {
+  margin: 11px 0 0; padding: 10px 13px; border-radius: 10px;
+  background: var(--panel); border-left: 2px solid var(--blue);
+}
+.mreply strong { font-size: 12px; color: var(--blue); }
+.mreply p { margin: 5px 0; font-size: 12.5px; line-height: 1.6; }
+.mreply .muted { font-size: 11px; }
+
+.quoted {
+  margin: 0 0 16px; padding: 13px 15px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel-2);
+  font-size: 13px; line-height: 1.65; white-space: pre-wrap;
+}
+
+/* What somebody wrote, in the owner's list.  Left as prose rather than
+   styled as a link: it is the content of the row, not a label pointing
+   somewhere else, and a paragraph centred and underlined in blue is hard
+   to read a column of. */
+.said {
+  display: block; width: 100%; padding: 0; border: 0; background: none;
+  color: var(--ink); font: inherit; font-size: 12.5px; line-height: 1.55;
+  text-align: left; cursor: pointer;
+  transition: color var(--t-quick);
+}
+.said:hover { color: var(--blue); }

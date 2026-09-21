@@ -19,6 +19,10 @@ or a misunderstanding depending on facts nobody in this process has.
 
 import json
 import os
+import re
+import secrets
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,16 +40,185 @@ API = (os.environ.get("PATCHVANE_GITHUB_API")
 TO = (os.environ.get("PATCHVANE_FEEDBACK_EMAIL")
       or os.environ.get("PATCHVANE_OWNER") or "").strip().lower()
 
+# Who may read what everybody sent and answer it.  One address, because
+# this is somebody's deployment rather than a product with a support desk.
+OWNER = (os.environ.get("PATCHVANE_OWNER")
+         or os.environ.get("PATCHVANE_FEEDBACK_EMAIL") or "").strip().lower()
+
 MAX = 8000          # characters of one report
 TITLE = 90          # characters of the first line used as an issue title
+
+# ---------------------------------------------------------------- the book
+
+# Where reports are kept.  This is the part that makes the page honest: it
+# used to tell people there was "nowhere for this to go" when no tracker and
+# no mail were configured, which is a strange thing to say to somebody who
+# has just found a bug -- the deployment has a disk, and the person who runs
+# it signs in to it. So everything is written down here first. Mail and the
+# issue tracker are how the owner hears about it sooner, not whether it is
+# recorded at all.
+BOOK = ""
+_LOCK = threading.Lock()
+
+KINDS = {
+    "bug": "Something is broken",
+    "wrong": "A number or a status looks wrong",
+    "idea": "Something could be better",
+    "question": "I could not work out how to do something",
+    "praise": "Something to say",
+}
+
+STATUSES = {
+    "new": "Not looked at yet",
+    "seen": "Read",
+    "working": "Being worked on",
+    "fixed": "Done",
+    "known": "Known, not being worked on yet",
+    "wontfix": "Not going to change",
+    "ask": "Waiting on an answer from you",
+}
+
+
+def configure(data_dir: str) -> None:
+    """Point the book at the deployment's own storage."""
+    global BOOK
+    BOOK = os.path.join(data_dir, "feedback.json")
+
+
+def _read() -> list:
+    if not BOOK or not os.path.exists(BOOK):
+        return []
+    try:
+        with open(BOOK, encoding="utf-8") as fh:
+            got = json.load(fh)
+        return got if isinstance(got, list) else []
+    except Exception:
+        return []
+
+
+def _write(rows: list) -> bool:
+    if not BOOK:
+        return False
+    tmp = "%s.%d.tmp" % (BOOK, os.getpid())
+    try:
+        os.makedirs(os.path.dirname(BOOK), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, indent=1)
+        os.replace(tmp, BOOK)
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def is_owner(email: str) -> bool:
+    return bool(OWNER) and (email or "").strip().lower() == OWNER
+
+
+def record(text: str, kind: str, who: str = "", name: str = "",
+           where: str = "") -> dict:
+    """Write one report down.  This always happens, and happens first."""
+    row = {
+        "id": secrets.token_hex(8),
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "who": (who or "").strip().lower(),
+        "name": (name or "").strip()[:80],
+        "kind": kind if kind in KINDS else "bug",
+        "text": clean(text),
+        # Which page they were looking at.  "The numbers are wrong" is a
+        # different report depending on which numbers were on screen.
+        "where": re.sub(r"[^a-z]", "", (where or "").lower())[:20],
+        "status": "new",
+        "answers": [],
+    }
+    with _LOCK:
+        rows = _read()
+        rows.insert(0, row)
+        _write(rows[:2000])
+    return row
+
+
+def mine(email: str) -> list:
+    """What one person sent, and what has been said back."""
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    return [r for r in _read() if r.get("who") == email]
+
+
+def everything() -> list:
+    return _read()
+
+
+def answer(rid: str, status: str, note: str, by: str = "") -> dict:
+    """The owner's reply to one report.
+
+    Kept as a list rather than one field, so somebody who is told it is
+    being worked on and then that it is done can see both, in order, and
+    the second does not quietly overwrite the first."""
+    if status not in STATUSES:
+        return {"ok": False, "error": "That is not a status."}
+    note = clean(note)
+    with _LOCK:
+        rows = _read()
+        for r in rows:
+            if r.get("id") != rid:
+                continue
+            r["status"] = status
+            r.setdefault("answers", []).append({
+                "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "status": status, "note": note, "by": by,
+            })
+            ok = _write(rows)
+            return {"ok": ok, "report": r} if ok else {
+                "ok": False, "error": "That could not be written down."}
+    return {"ok": False, "error": "No report with that id."}
+
+
+def tell_them(row: dict, status: str, note: str, log=None) -> bool:
+    """Let the person who wrote it know somebody has looked.
+
+    A report acknowledged weeks later by silence is a report nobody sends
+    twice, so the answer goes to them rather than waiting for them to come
+    back and check."""
+    to = (row or {}).get("who") or ""
+    if not to or not mailer.ready():
+        return False
+    said = STATUSES.get(status, status)
+    inner = """
+      <p style="margin:0 0 6px;">%(hello)s</p>
+      <p style="margin:0 0 14px;color:%(faint)s;">About what you sent on
+        %(when)s: <b>%(said)s</b>.</p>
+      %(note)s
+      <div style="padding:13px 15px;border:1px solid %(line)s;border-radius:11px;
+                  white-space:pre-wrap;font:400 13px/1.6 %(font)s;
+                  color:%(faint)s;">%(text)s</div>
+    """ % dict(
+        hello=mailer.esc("Hello%s," % (" " + row["name"].split()[0]
+                                       if row.get("name") else "")),
+        when=mailer.esc(row.get("at", "")[:10]), said=mailer.esc(said),
+        note=('<p style="margin:0 0 14px;">%s</p>' % mailer.esc(note)
+              if note else ""),
+        text=mailer.esc(row.get("text", "")[:1200]),
+        faint=mailer.FAINT, line=mailer.LINE, font=mailer.FONT)
+    subject = "Patchvane: %s" % said.lower()
+    plain = "%s\n\n%s\n\nYou wrote:\n\n%s\n" % (
+        said, note, row.get("text", "")[:1200])
+    sent, _ = mailer.send(to, subject, mailer.shell(subject, inner), plain,
+                          log=log)
+    return sent
 
 
 def routes() -> dict:
     """Which ways out actually work from this deployment.
 
-    Asked before the choice is offered, so that nobody picks a route that
-    was never going to carry their message."""
-    return {"issue": bool(REPO and TOKEN), "mail": bool(TO and mailer.ready())}
+    "Written down" is always one of them, so the page never has to tell
+    anybody their report has nowhere to go."""
+    return {"issue": bool(REPO and TOKEN), "mail": bool(TO and mailer.ready()),
+            "owner": bool(OWNER), "kinds": KINDS, "statuses": STATUSES}
 
 
 def clean(text: str) -> str:
@@ -113,8 +286,8 @@ def as_mail(text: str, who: str = "", kind: str = "feedback", log=None) -> tuple
     """Send it to whoever runs this.  Returns (ok, what happened, link)."""
     if not routes()["mail"]:
         return False, "This deployment has nowhere to send mail.", ""
-    subject = "Patchvane %s: %s" % (
-        "bug report" if kind == "bug" else "feedback", title_of(text))
+    subject = "Patchvane \u2014 %s: %s" % (
+        KINDS.get(kind, "feedback").lower(), title_of(text))
     body = clean(text)
     # Their address is in the message rather than in a Reply-To header: the
     # header would have to be threaded through all seven providers below
@@ -132,30 +305,33 @@ def as_mail(text: str, who: str = "", kind: str = "feedback", log=None) -> tuple
     return sent, "sent" if sent else why, ""
 
 
-def deliver(text: str, route: str, who: str = "", log=None) -> dict:
-    """One report, the way they asked for it to go."""
+def deliver(text: str, kind: str, who: str = "", name: str = "",
+            where: str = "", route: str = "", log=None) -> dict:
+    """One report: written down first, then passed on where it can be.
+
+    The order is the whole point. Delivery used to come first and be the
+    only thing that happened, so a deployment with no tracker and no mail
+    told people there was nowhere for their report to go -- and there was
+    nowhere, because nothing was keeping it. Now it is kept, the owner sees
+    it when they sign in, and mail or an issue is how they find out sooner."""
     text = clean(text)
     if len(text) < 10:
         return {"ok": False, "error": "A few more words would help."}
-    if route == "issue":
-        ok, why, link = as_issue(text, who, log=log)
-        kind = "bug"
-    elif route == "mail":
-        ok, why, link = as_mail(text, who, "feedback", log=log)
-        kind = "feedback"
-    else:
-        return {"ok": False, "error": "Choose where it should go."}
+    if kind not in KINDS:
+        return {"ok": False, "error": "Say what kind of thing this is."}
 
-    # A tracker that will not answer should not lose what somebody took the
-    # trouble to write.  Mail is the fallback because it always reaches a
-    # person, even when it reaches them without a number on it.
-    if not ok and route == "issue" and routes()["mail"]:
-        sent, why2, _ = as_mail(text, who, "bug", log=log)
-        if sent:
-            return {"ok": True, "route": "mail", "fellback": True,
-                    "note": "The issue tracker would not take it, so this "
-                            "went to the maintainer as mail instead. It is "
-                            "not lost."}
-    if not ok:
-        return {"ok": False, "error": why}
-    return {"ok": True, "route": route, "link": link, "kind": kind}
+    row = record(text, kind, who=who, name=name, where=where)
+    out = {"ok": True, "id": row["id"], "kind": kind, "stored": True}
+
+    # An issue only if they asked for one and the tracker exists: a GitHub
+    # issue is public, and that is not a thing to do to somebody's words
+    # without being asked.
+    if route == "issue" and routes()["issue"]:
+        ok, _why, link = as_issue(text, who, log=log)
+        if ok:
+            out["link"] = link
+            out["route"] = "issue"
+    if routes()["mail"]:
+        sent, _why, _ = as_mail(text, who, kind, log=log)
+        out["told"] = sent
+    return out
