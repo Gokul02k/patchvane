@@ -146,7 +146,7 @@ bucket, and prints the sum so you can see it balance:
 | In mainline | the commit is in Linus' tree |
 | Accepted, on the way | a maintainer took it; heading for a merge window |
 | Being reviewed | someone is looking at it, or has already tagged it |
-| Needs a new version | changes were requested, so a v2 is owed |
+| Changes requested | somebody asked for changes to this posting |
 | No reply yet | posted, and nobody has said anything |
 | Dropped | superseded, rejected, or picked up somewhere else |
 
@@ -220,6 +220,48 @@ The first run of this on a real account took **Your turn** from 38 threads to
 change, or waiting on an answer.
 
 With no API key the first two still apply; only the third is skipped.
+
+### Answered somewhere else
+
+Most requests are not answered in the thread they were made in. A reviewer
+asks for a change and the answer is a v2, which is a new posting with a new
+thread; the old thread keeps the request in it for ever. Reading that thread
+alone goes on asking for a rewrite that went out days ago and was merged
+since, which is the single largest source of work that looks owed and is not.
+
+So a thread is also closed by a newer posting of the same work. Versions are
+normally matched on the subject, and taking review on board is the one thing
+that reliably changes a subject: two patches merged into one, or a fix
+renamed after being told what it should have said. When that link is broken
+the subsystem is used instead — `nvdimm: pmem: fix gendisk leak when
+badblocks init fails` and `nvdimm/pmem: Release gendisk on probe failure`
+are the same work under two names, and the first word is what survives.
+
+Two more things close a thread without a word from you. A maintainer turning
+the patch down, or saying it was already fixed elsewhere, ends it: what is
+wanted then is silence, not a reply agreeing to go away. And a robot is
+believed when it says the commit is in a tree — `tip-bot2` announcing a merge
+settles the question even when a review turns up six days afterwards, as
+happened to an irqchip patch Thomas Gleixner had already folded and applied.
+
+### A new version is not the same as "changes requested"
+
+Patchwork records that state whoever set it. An author writing *"please drop
+this, three of the changes are wrong"* leaves exactly the same mark as a
+maintainer demanding a rewrite, and the first of those is already answered.
+So **New versions** asks the thread, not the state: a respin is owed when
+somebody else asked for one, nothing newer has gone out, and the last word
+in the thread is not your own.
+
+### One conversation per conversation
+
+A series sent with `git send-email` in one run is one thread. A series sent
+as fourteen runs is fourteen threads, which are folded back into one series
+here because that is what they are — but the replies to them are not
+interchangeable. A maintainer answering patch 12 has said nothing whatever
+about patch 1, and showing his words under patch 1's subject reports a
+conversation that never happened. Every reply is therefore kept against the
+thread it was written in, and **Your turn** lists threads, not series.
 
 ### Reading a patch without leaving the page
 

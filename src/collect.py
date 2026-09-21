@@ -423,9 +423,13 @@ RANGE = (r"(?:[\s,]+(?:patch(?:es)?\s+)?\d+"
          r"(?:\s*(?:[-,&]|to|and)\s*\d+)*)?")
 
 APPLIED_RE = re.compile(
-    r"(applied[,!.]?\s+thanks|applied" + RANGE + r"\s+to\b|now applied|"
-    r"thanks,?\s+applied|"
+    r"(applied[,!.]?\s+thank|applied" + RANGE + r"\s+to\b|now applied|"
+    # "Applied as 7.4 material, thanks!" names when, not where.
+    r"applied\s+as\b|thanks,?\s+applied|"
     r"has been applied|series applied|pushed to |queued (?:up )?for|"
+    # tip-bot2's announcement, which names a branch like "irq/drivers" that
+    # looks nothing like a tree to the pattern below it.
+    r"following commits?\s+(?:has|have)\s+been\s+merged\s+into|"
     r"i(?:'ve| have) applied|^[ \t]*applied[.!]*[ \t]*$|"
     r"added\s+[^.\n]{0,28}?to\s+" + TREE_WORD + r"|"
     r"merged\s+(?:this\s+|it\s+)?in?to\s+" + TREE_WORD + r"|"
@@ -454,6 +458,28 @@ def is_greeting(line: str) -> bool:
     return bool(GREETING_RE.match(s)) and len(s.split()) <= 3
 
 
+# A maintainer turning a patch down, or telling us it is already fixed.
+# Either way the patch is finished and there is nothing to send: what is
+# wanted is silence, not a reply agreeing to go away.
+#
+# Only the explicit forms.  "This is the wrong fix, it should read X" is a
+# request for a v2 and must not match, so the wording of the complaint is
+# left alone and only the refusal itself is read.
+DECLINED_RE = re.compile(
+    r"(prefer\s+(?:that\s+)?(?:we|i)\s+(?:do\s+)?not\s+apply|"
+    r"not\s+in\s+favou?r\s+of\s+(?:taking|applying|merging)|"
+    r"(?:will|would)\s+not\s+be\s+(?:applying|taking|merging)|"
+    r"not\s+going\s+to\s+(?:apply|take|merge)|"
+    r"rather\s+not\s+(?:apply|take|merge)|"
+    r"\bnacked-by\b|"
+    r"(?:has|have)\s+(?:already\s+)?been\s+fixed\s+(?:in|by)\b|"
+    r"already\s+fixed\s+(?:in|by)\b)", re.I)
+
+
+def says_declined(text: str) -> bool:
+    return bool(DECLINED_RE.search(text))
+
+
 def says_applied(text: str) -> bool:
     """True when someone is telling us a patch went in.  Maintainers phrase it
     a dozen ways: "Applied, thanks", a bare "Applied.", or Mark Brown's
@@ -466,7 +492,7 @@ def says_applied(text: str) -> bool:
 
 BOT_ADDRS = ("patchwork-bot", "bot+bpf-ci", "lkp@intel.com", "syzbot",
              "kernel test robot", "noreply", "no-reply", "mailer-daemon",
-             "bot@", "ci@")
+             "tip-bot", "bot@", "ci@")
 
 MERGE_STATES = {"merged", "in-next", "in-tree", "accepted"}
 
@@ -749,6 +775,7 @@ def _fetch_thread_once(f: Fetcher, msgid: str) -> list:
             "bot": is_bot(frm),
             "tags": tags,
             "applied": says_applied(clean[:5000]),
+            "declined": says_declined(clean[:5000]),
             "question": "?" in clean[:4000],
             "excerpt": excerpt[:400],
             "commit_hints": commits[:6],
@@ -820,7 +847,12 @@ def collect_lore(f: Fetcher, out: dict) -> None:
         if not p["is_patch"]:
             loose.append(p)
             continue
-        stems[stem(p["msgid"]) or p["msgid"]].append(p)
+        # Which lore thread this posting opened.  Carried on the message from
+        # here on: a series that arrives as several threads is folded into one
+        # record below, and without this there is no way back to the thread a
+        # given reply was actually written in.
+        p["stem"] = stem(p["msgid"]) or p["msgid"]
+        stems[p["stem"]].append(p)
 
     # one thread fetch per stem: a split series is several threads and every
     # one of them can carry replies
@@ -851,6 +883,18 @@ def collect_lore(f: Fetcher, out: dict) -> None:
             threads[k] = msgs
     sys.stderr.write("\n")
 
+    # What each of those threads was about, so a reply can be shown under the
+    # subject it answers rather than under whichever patch happens to sort
+    # first in the series it was folded into.
+    stem_titles = {}
+    for k, msgs in stems.items():
+        ordered = sorted(msgs, key=lambda m: m["msgid"])
+        head = next((m for m in ordered if m["is_cover"]), ordered[0])
+        stem_titles[k] = {
+            "msgid": head["msgid"],
+            "subject": re.sub(r"^\s*\[[^\]]*\]\s*", "", head["subject"]),
+        }
+
     series, series_threads = {}, {}
     for cluster in merge_stems(stems):
         msgs = [m for k in cluster for m in stems[k]]
@@ -862,6 +906,7 @@ def collect_lore(f: Fetcher, out: dict) -> None:
                 if m["msgid"] and m["msgid"] in seen:
                     continue
                 seen.add(m["msgid"])
+                m["stem"] = k
                 merged.append(m)
         series_threads[sid] = merged
 
@@ -869,6 +914,7 @@ def collect_lore(f: Fetcher, out: dict) -> None:
     out["lore_posts"] = posts
     out["lore_series"] = series
     out["lore_threads"] = series_threads
+    out["lore_stem_titles"] = stem_titles
     out["lore_loose"] = loose
     out["sources"]["lore"] = {
         "ok": True,
@@ -1396,6 +1442,7 @@ def build(out: dict, brain=None) -> dict:
                                        cover["subject"]) if cover else ""),
                 "seq": m["seq"],
                 "of": m["of"],
+                "stem": m.get("stem", ""),
                 "version": m["version"],
                 "tree_hint": tree_hint,
                 "list": listname,
@@ -1466,7 +1513,13 @@ def build(out: dict, brain=None) -> dict:
     if brain is not None:
         reread(brain, soft_cases(patches, evidence), patches, series_out)
     restate_series(patches, series_out)
+    mark_answered(patches, series_out, threads)
     settle_replies(series_out, brain)
+
+    # Each lore thread needs a link of its own, and only here is the base the
+    # collection was read from still in hand.
+    for title in (out.get("lore_stem_titles") or {}).values():
+        title["lore"] = lore_url(title["msgid"])
 
     return assemble(out, patches, series_out, threads, tree_urls)
 
@@ -1600,6 +1653,102 @@ def restate_series(patches: list, series_out: list) -> None:
             s["states"] = sorted(set(states))
 
 
+def subsystem(subject: str) -> str:
+    """What a subject says it touches: "nvdimm" out of both "nvdimm: pmem:
+    fix gendisk leak" and "nvdimm/pmem: Release gendisk on probe failure".
+
+    Only the first word, because that is the part a rewrite keeps.  A v2 that
+    takes review on board is retitled far more often than it is renamed into
+    another subsystem: "fix gendisk leak when badblocks init fails" became
+    "Release gendisk on probe failure" and stayed nvdimm throughout."""
+    head = (subject or "").split(":")[0].split("/")[0].strip().lower()
+    return head if 0 < len(head) <= 24 and " " not in head else ""
+
+
+def answered_later(rows: list, version: int, since: str, sub: str):
+    """Ours, in the same subsystem, at a higher version, sent after `since`.
+
+    This is the link that breaks exactly when it is needed.  Versions are
+    matched on the subject, and taking review on board is the one thing that
+    reliably changes a subject -- merging two patches into one, or renaming
+    the fix after being told what it should have said.  The result is a v1
+    thread holding a request that was answered days ago and merged since."""
+    if not sub or not since:
+        return None
+    for q in rows:
+        if (q["version"] > version and (q["date"] or "") > since
+                and subsystem(q["subject"]) == sub):
+            return q
+    return None
+
+
+def mark_answered(patches: list, series_out: list, threads: dict) -> None:
+    """When the newest version of a piece of work went out, and whether a new
+    one is still owed.
+
+    Both are questions about the work, not about a posting, and that is the
+    whole difficulty.  A reviewer asks for a change on v1 and the answer is
+    v2, which is a new thread somewhere else; the v1 thread keeps the request
+    in it for ever.  Reading that thread on its own will go on asking for a
+    rewrite that went out days ago and has been merged since."""
+    by_series = defaultdict(list)
+    for p in patches:
+        by_series[p["series"]].append(p)
+
+    # Everything we have posted, by what it touches, newest first.
+    newer = defaultdict(list)
+    for p in sorted(patches, key=lambda p: p["date"] or "", reverse=True):
+        sub = subsystem(p["subject"])
+        if sub:
+            newer[sub].append(p)
+
+    # Only what the versions themselves say.  The looser question -- did we
+    # answer this by posting something retitled -- is asked per thread in
+    # assemble(), where the patch that was actually replied to is known.  A
+    # series here may be fourteen unrelated patches folded into one record,
+    # and letting any of them answer for the rest suppresses real work.
+    for s in series_out:
+        rows = by_series.get(s["id"]) or []
+        later = [v["date"] for p in rows for v in (p.get("versions") or [])
+                 if v["version"] > p["version"] and v["date"]]
+        s["answered_at"] = max(later) if later else ""
+
+    for p in patches:
+        p["respin_owed"] = False
+        p["respin_note"] = ""
+        if p["state"] != "changes-requested":
+            continue
+
+        thread = [m for m in (threads.get(p["series"]) or []) if m["date"]]
+        if p.get("stem"):
+            thread = [m for m in thread if m.get("stem") == p["stem"]] or thread
+        humans = sorted([m for m in thread if not m["bot"]],
+                        key=lambda m: m["date"])
+
+        # Patchwork records "changes requested" whoever asked, and an author
+        # writing "please drop this, three of the changes are wrong" sets the
+        # same flag as a maintainer demanding a rewrite.  If our own message
+        # is the last word, we have already answered and nobody is waiting.
+        if humans and humans[-1]["mine"]:
+            p["respin_note"] = "you answered this yourself"
+            continue
+
+        asked_at = max([m["date"] for m in humans if not m["mine"]]
+                       or [p["date"] or ""])
+
+        if p["version"] < p.get("latest_version", p["version"]):
+            p["respin_note"] = "v%d went out" % p["latest_version"]
+            continue
+
+        sub = subsystem(p["subject"])
+        sent = answered_later(newer.get(sub) or [], p["version"], asked_at, sub)
+        if sent:
+            p["respin_note"] = "answered by %s" % sent["subject"]
+            continue
+
+        p["respin_owed"] = True
+
+
 def settle_replies(series_out: list, brain=None) -> None:
     """Whether a reply is owed, decided once the states are final.
 
@@ -1613,7 +1762,8 @@ def settle_replies(series_out: list, brain=None) -> None:
     unsure = []
     for s in series_out:
         thread = s.pop("_thread", [])
-        s["waiting_on_us"] = waiting_on_us(thread, s.get("state", ""))
+        s["waiting_on_us"] = waiting_on_us(thread, s.get("state", ""),
+                                           s.get("answered_at", ""))
         if s["waiting_on_us"] and brain is not None:
             unsure.append((s, thread))
     if not unsure:
@@ -1766,10 +1916,13 @@ def ci_verdict(bot_replies: list) -> str:
 # A state that says the patch got in.  Nothing the author writes now changes
 # it, so the thread is finished with them.
 SETTLED = {"merged", "in-next", "in-tree", "accepted", "superseded",
-           "rejected", "not-applicable", "handled-elsewhere"}
+           "rejected", "not-applicable", "handled-elsewhere",
+           # Sitting in a maintainer's queue, and waiting on them.  "Applied
+           # as 7.4 material, thanks!" is good news with nothing owed back.
+           "queued", "awaiting-upstream"}
 
 
-def waiting_on_us(thread: list, state: str = "") -> bool:
+def waiting_on_us(thread: list, state: str = "", answered_at: str = "") -> bool:
     """True when the last word in the thread is a person wanting something.
 
     Kernel lists treat an unnecessary reply as noise.  "Thanks for applying"
@@ -1781,7 +1934,12 @@ def waiting_on_us(thread: list, state: str = "") -> bool:
     phrasing is not worth chasing: "Applied 1-2 to sched_ext/for-7.4" names a
     branch with nothing like "next" in it, and the next maintainer will
     phrase it a way nobody has thought of yet.  What is known is that the
-    patch got in, and once that is known the wording does not matter."""
+    patch got in, and once that is known the wording does not matter.
+
+    `answered_at` is when the newest version of this work went out.  A review
+    is answered by a v2, not by a mail, and the v2 opens a thread of its own;
+    without this the v1 thread asks for a rewrite that was posted days ago
+    and accepted since."""
     if state in SETTLED:
         return False
     msgs = sorted([m for m in thread if m["date"]], key=lambda m: m["date"])
@@ -1799,7 +1957,24 @@ def waiting_on_us(thread: list, state: str = "") -> bool:
         return False
     if last["applied"]:
         return False
-    if last["tags"] and not last["question"]:
+    # tip-bot2 and patchwork announce a merge as robots, so they are filtered
+    # out of `later` above with the CI noise.  A robot saying the commit is in
+    # a tree is not noise: it is the most reliable word in the thread, and it
+    # settles the question however late the review arrives afterwards.
+    if any(m["applied"] and m["date"] > last_ours for m in msgs if m["bot"]):
+        return False
+    # Turned down, or already fixed by somebody else.  Either way the patch is
+    # over and a reply saying so is the noise this whole function exists to
+    # avoid putting on a list somebody has to read.
+    if last.get("declined"):
+        return False
+    if answered_at and answered_at > last["date"]:
+        return False
+    # A review tag is the end of that reviewer's business with the patch.  The
+    # question mark that often follows it is addressed to somebody else --
+    # "Acked-by: me.  Hey Greg, could you take this through your tree?" -- and
+    # answering it is the maintainer's job, not the author's.
+    if last["tags"]:
         return False
     return True
 
@@ -1925,33 +2100,88 @@ def assemble(out, patches, series, threads, tree_urls) -> dict:
         row["cumulative"] = run
 
     # threads that look like they need us
+    #
+    # One row per lore thread, not per series.  A send-email run that loses
+    # its threading posts fourteen patches as fourteen separate threads, which
+    # are folded back into one series here because that is what they are -- but
+    # the replies to them are not interchangeable.  A maintainer answering
+    # patch 12 has said nothing whatever about patch 1, and putting his words
+    # under patch 1's subject reports a conversation that never happened.
+    titles = out.get("lore_stem_titles") or {}
+    by_stem = defaultdict(list)
+    for p in patches:
+        if p.get("stem"):
+            by_stem[p["stem"]].append(p)
+
+    newer = defaultdict(list)
+    for p in sorted(patches, key=lambda p: p["date"] or "", reverse=True):
+        sub = subsystem(p["subject"])
+        if sub:
+            newer[sub].append(p)
+
+    def answered(stem_key, fallback):
+        """When this thread's work was last spoken for by a newer posting."""
+        rows = by_stem.get(stem_key) or []
+        if not rows:
+            return fallback
+        direct = [v["date"] for p in rows for v in (p.get("versions") or [])
+                  if v["version"] > p["version"] and v["date"]]
+        if direct:
+            return max(direct)
+        for p in rows:
+            sub = subsystem(p["subject"])
+            q = answered_later(newer.get(sub) or [], p["version"],
+                               p["date"] or "", sub)
+            if q:
+                return q["date"]
+        return ""
+
     openthreads = []
     for s in series:
-        thread = sorted([m for m in (threads.get(s["id"]) or []) if m["date"]],
-                        key=lambda m: m["date"], reverse=True)
-        last = next((m for m in thread if not m["mine"] and not m["bot"]), None)
-        if not last:
-            continue
-        openthreads.append({
-            "series": s["name"] or s["id"],
-            "id": s["id"],
-            "lore": s["lore"],
-            "tree": s["tree_hint"] or s["list"],
-            "state": s["state"],
-            "waiting_on_us": s["waiting_on_us"],
-            "last_from": last["name"],
-            "last_date": last["date"],
-            "excerpt": last["excerpt"],
-            # Every reply, not just the newest.  A question like "what did
-            # the reviewer ask me to change" is about something said several
-            # messages back, and a single excerpt cannot answer it.
-            "replies": [{"who": m["name"], "date": m["date"],
-                         "text": m["excerpt"]}
-                        for m in reversed(thread)
-                        if not m["mine"] and not m["bot"]][-12:],
-            "count": len([m for m in thread if not m["mine"] and not m["bot"]]),
-            "tags": s["tag_count"],
-        })
+        whole = sorted([m for m in (threads.get(s["id"]) or []) if m["date"]],
+                       key=lambda m: m["date"], reverse=True)
+        grouped = defaultdict(list)
+        for m in whole:
+            grouped[m.get("stem") or s["id"]].append(m)
+
+        for stem_key, thread in grouped.items():
+            last = next((m for m in thread
+                         if not m["mine"] and not m["bot"]), None)
+            if not last:
+                continue
+            title = titles.get(stem_key) or {}
+            rows = by_stem.get(stem_key) or []
+            state = rollup([p["state"] for p in rows]) if rows else s["state"]
+            openthreads.append({
+                "series": title.get("subject") or s["name"] or s["id"],
+                "id": s["id"],
+                # The message that opened this thread, so following the row
+                # lands on the conversation it is describing rather than on
+                # whatever else went out in the same run.
+                "msgid": title.get("msgid") or "",
+                "stem": stem_key,
+                "lore": title.get("lore") or s["lore"],
+                "tree": s["tree_hint"] or s["list"],
+                "state": state,
+                "waiting_on_us": (not s.get("no_reply_wanted")
+                                  and waiting_on_us(
+                                      thread, state,
+                                      answered(stem_key,
+                                               s.get("answered_at", "")))),
+                "last_from": last["name"],
+                "last_date": last["date"],
+                "excerpt": last["excerpt"],
+                # Every reply, not just the newest.  A question like "what did
+                # the reviewer ask me to change" is about something said
+                # several messages back, and one excerpt cannot answer it.
+                "replies": [{"who": m["name"], "date": m["date"],
+                             "text": m["excerpt"]}
+                            for m in reversed(thread)
+                            if not m["mine"] and not m["bot"]][-12:],
+                "count": len([m for m in thread
+                              if not m["mine"] and not m["bot"]]),
+                "tags": s["tag_count"],
+            })
     openthreads.sort(key=lambda t: (not t["waiting_on_us"], t["last_date"]),
                      reverse=False)
     openthreads.sort(key=lambda t: t["last_date"], reverse=True)
@@ -2086,15 +2316,29 @@ def read_notes() -> list:
 
 
 def render_standalone(data: dict) -> None:
+    """One file that opens from anywhere, with nothing to fetch.
+
+    Every script the page loads has to go inside it, not just the big one.
+    A src= left behind resolves against whatever directory the file was
+    opened from, so the page comes up blank on the one machine it was made
+    to be carried to."""
     html = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
     css = open(os.path.join(WEB, "style.css"), encoding="utf-8").read()
-    js = open(os.path.join(WEB, "app.js"), encoding="utf-8").read()
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     html = html.replace('<link rel="stylesheet" href="style.css">',
                         "<style>\n%s\n</style>" % css)
-    html = html.replace('<script src="app.js"></script>',
-                        "<script>window.__DATA__ = %s;</script>\n<script>\n%s\n"
-                        "</script>" % (blob, js))
+
+    tags = re.findall(r'<script src="([^"]+)"></script>', html)
+    for n, tag in enumerate(tags):
+        path = os.path.join(WEB, tag)
+        if not os.path.exists(path):
+            continue
+        js = open(path, encoding="utf-8").read().replace("</script", "<\\/script")
+        # The data has to be in scope before the first line of the first
+        # script runs, and app.js is not always the first of them.
+        lead = ("<script>window.__DATA__ = %s;</script>\n" % blob) if n == 0 else ""
+        html = html.replace('<script src="%s"></script>' % tag,
+                            "%s<script>\n%s\n</script>" % (lead, js), 1)
     dst = os.path.join(ROOT, "dashboard.html")
     with open(dst, "w", encoding="utf-8") as fh:
         fh.write(html)

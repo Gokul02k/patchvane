@@ -109,8 +109,10 @@ const LEDGER = [
   { key: "review", label: "Being reviewed", cls: "amber", color: C.amber,
     blurb: "someone is looking at it, or has already tagged it",
     states: ["reviewed", "under-review", "needs-ack"] },
-  { key: "respin", label: "Needs a new version", cls: "purple", color: C.purple,
-    blurb: "changes were requested, so a v2 is owed",
+  /* A state, not a verdict. Whether a v2 is actually owed is a question
+     about the thread, and Your turn answers it there. */
+  { key: "respin", label: "Changes requested", cls: "purple", color: C.purple,
+    blurb: "somebody asked for changes to this posting",
     states: ["changes-requested"] },
   { key: "quiet", label: "No reply yet", cls: "grey", color: C.grey,
     blurb: "posted, and nobody has said anything",
@@ -1008,7 +1010,7 @@ function discThreads() {
   return grid("threads", conversations(), [
     { key: "series", label: "Thread", cls: "subject", width: "46%",
       csv: (r) => r.series,
-      render: (r) => `${subj(r.id || r.series, r.series)}${r.rounds
+      render: (r) => `${subj(r.msgid || r.id || r.series, r.series)}${r.rounds
           ? `<span class="tag">${r.rounds} rounds</span>` : ""}
         <div class="sub2">${mark(r.excerpt)}</div>` },
     { key: "last_from", label: "Last word from", csv: (r) => r.last_from,
@@ -1351,7 +1353,7 @@ function owedWork() {
 
   const rows = work();
   const groups = new Map();
-  rows.filter((p) => p.state === "changes-requested").forEach((p) => {
+  rows.filter(owesRespin).forEach((p) => {
     let g = groups.get(p.series);
     if (!g) {
       const s = byId.get(p.series) || {};
@@ -1371,17 +1373,39 @@ function owedWork() {
   const respins = [...groups.values()]
     .sort((a, b) => compare(b.date, a.date));
 
+  /* Which patches the waiting threads are actually about. A send-email run
+     that lost its threading is one series holding fourteen conversations, so
+     counting the whole series here credits one unanswered question with
+     thirteen patches nobody has said anything about. */
+  const asked = conversations().filter((t) => t.waiting_on_us);
+  const stems = new Set(asked.map((t) => t.stem).filter(Boolean));
+
   return {
     replies: {
-      threads: conversations().filter((t) => t.waiting_on_us),
-      patches: rows.filter((p) => waiting.has(p.series)),
+      threads: asked,
+      patches: rows.filter((p) => (stems.size && p.stem
+                                   ? stems.has(p.stem)
+                                   : waiting.has(p.series))),
     },
     respin: {
       series: respins,
-      patches: rows.filter((p) => p.state === "changes-requested"),
+      patches: rows.filter(owesRespin),
     },
     dropped: rows.filter(closed),
   };
+}
+
+/* Whether a new version is actually owed, which is not the same question as
+   whether the state reads "changes requested".
+
+   Patchwork records that state whoever set it, so an author writing "please
+   drop this, three of the changes are wrong" leaves the same mark as a
+   maintainer demanding a rewrite; and a v2 that merged two patches into one
+   is retitled, so the v1 keeps the state for ever. The collector works this
+   out with the thread in front of it. Older collections did not, and for
+   those the state is still the best guess available. */
+function owesRespin(p) {
+  return "respin_owed" in p ? p.respin_owed : p.state === "changes-requested";
 }
 
 function viewOwed() {
@@ -1406,7 +1430,7 @@ function owedReplies(owed) {
     <div class="notecard" data-reveal style="--i:${i}">
       <span class="pill amber">reply</span>
       <div class="tx">
-        <h4>${subj(t.id, t.series)}</h4>
+        <h4>${subj(t.msgid || t.id, t.series)}</h4>
         <p><strong>${esc(t.last_from)}</strong> wrote ${ago(t.last_date)}:
            ${esc(t.excerpt)}</p>
         <div class="next">
@@ -1426,9 +1450,17 @@ function owedReplies(owed) {
 function owedRespins(owed) {
   const list = owed.respin.series;
   if (!list.length) {
+    /* Saying "nobody asked for changes" to somebody looking at a row of
+       patches marked Changes requested reads as a bug in the page. Say which
+       of the two it is. */
+    const settled = work().filter((p) => p.state === "changes-requested");
     return `<div class="panel" data-reveal><div class="empty">
       <div class="emptyicon">\u2713</div>
-      <p>Nobody has asked for changes. Nothing to respin.</p></div></div>`;
+      <p>${settled.length
+        ? `Changes were asked for on ${plural(settled.length, "patch", "patches")},
+           and every one of them has been answered already.`
+        : "Nobody has asked for changes. Nothing to respin."}</p>
+      </div></div>`;
   }
   const cards = list.map((g, i) => `
     <div class="notecard" data-reveal style="--i:${i}">
@@ -3380,15 +3412,53 @@ function drawCommit() {
         ? `<dt>Committed by</dt><dd>${esc(c.committer)}</dd>` : ""}
       <dt>Date</dt><dd>${esc(c.date || "\u2014")}</dd>
     </dl></section>
-    ${c.body ? `<section class="thsec"><h3>Message</h3>
-      <pre>${esc(c.body)}</pre></section>` : ""}
-    ${c.files.length ? `<section class="thsec">
-      <h3>${plural(c.files.length, "file")} changed</h3>
-      <ul class="filelist">${c.files.map((f) => `<li>
+    ${messageView(c.body)}
+    ${c.files.length && diffFiles(c.diff).length < 2 ? fold(
+      `${plural(c.files.length, "file")} changed`,
+      plural(c.files.reduce((n, f) => n + (f.changed || 0), 0), "line"),
+      `<ul class="filelist">${c.files.map((f) => `<li>
         <span class="mono">${esc(f.path)}</span>
         <span class="muted">${plural(f.changed, "line")}</span></li>`).join("")}
-      </ul></section>` : ""}
+      </ul>`) : ""}
     ${diffView(c.diff)}`;
+}
+
+/* A section the reader opens only if they want it.
+
+   <details> rather than a button and a class of our own: it keeps its own
+   open state across redraws, it is reachable from the keyboard without any
+   wiring, and find-in-page can open it, which a div never does. */
+function fold(title, note, body, open) {
+  return `<details class="fold"${open ? " open" : ""}>
+    <summary><span class="fmark" aria-hidden="true"></span>
+      <span class="ftitle">${esc(title)}</span>
+      ${note ? `<span class="fnote">${esc(note)}</span>` : ""}</summary>
+    <div class="fbody">${body}</div></details>`;
+}
+
+/* The commit message, which is the one part of a commit worth reading before
+   deciding whether to read the rest.
+
+   Most of them are a subject and a short paragraph and are better shown than
+   folded.  The long ones are long because of a changelog or a revert trail
+   under the first paragraph, so the opening stays out and the tail folds. */
+const MSG_LINES = 12;
+
+function messageView(body) {
+  const text = (body || "").replace(/\s+$/, "");
+  if (!text) return "";
+  const lines = text.split("\n");
+  if (lines.length <= MSG_LINES) {
+    return `<section class="thsec"><h3>Message</h3>
+      <pre>${esc(text)}</pre></section>`;
+  }
+  const head = lines.slice(0, MSG_LINES).join("\n");
+  const tail = lines.slice(MSG_LINES).join("\n");
+  return `<section class="thsec"><h3>Message</h3>
+    <pre>${esc(head)}</pre>
+    ${fold("Rest of the message",
+           plural(lines.length - MSG_LINES, "line"),
+           `<pre>${esc(tail)}</pre>`)}</section>`;
 }
 
 /* The change itself.
@@ -3397,17 +3467,74 @@ function drawCommit() {
    stops, answers the least interesting question about a commit. The diff is
    the commit. It is rendered a line at a time rather than dropped into one
    block because a diff is unreadable without the colour: the eye finds the
-   + and the - long before it reads either. */
+   + and the - long before it reads either.
+
+   It is also the longest thing in the drawer by a wide margin, and a
+   treewide typo fix touches sixty files, so it arrives folded: one fold per
+   file, named and counted, and the reader opens the one they came for. */
 function diffView(d) {
   if (!d) return "";
   if (!d.text) {
     return d.why ? `<section class="thsec"><h3>The change</h3>
       <p class="hint" style="margin:0">${esc(d.why)}.</p></section>` : "";
   }
+  const cut = d.cut ? `<p class="hint">This is a long one, so the rest is cut.
+    The whole of it is on git.kernel.org.</p>` : "";
+  const files = diffFiles(d);
+  if (files.length < 2) {
+    return `<section class="thsec"><h3>The change</h3>
+      ${fold("Show the diff", countChanged(d.text),
+             `<div class="diff">${diffRows(d.text)}</div>`)}
+      ${cut}</section>`;
+  }
+  return `<section class="thsec"><h3>The change</h3>
+    <p class="hint">${plural(files.length, "file")}. Open one to read it.</p>
+    ${files.map((f) => fold(f.path, countChanged(f.text),
+        `<div class="diff">${diffRows(stripFileHeader(f.text))}</div>`)).join("")}
+    ${cut}</section>`;
+}
+
+/* One entry per file the diff touches.  Anything before the first "diff
+   --git" is a preamble git puts there and belongs to no file. */
+function diffFiles(d) {
+  if (!d || !d.text) return [];
+  const out = [];
+  let cur = null;
+  d.text.split("\n").forEach((ln) => {
+    const m = /^diff --git a\/(\S+) b\/(\S+)/.exec(ln);
+    if (m) {
+      cur = { path: m[2] || m[1], lines: [] };
+      out.push(cur);
+    }
+    if (cur) cur.lines.push(ln);
+  });
+  return out.map((f) => ({ path: f.path, text: f.lines.join("\n") }));
+}
+
+/* The "diff --git", "index" and "---/+++" lines name the file, which the
+   fold above them has already done.  Repeating it costs four lines of the
+   six a one-word typo fix has. */
+function stripFileHeader(text) {
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length && !lines[i].startsWith("@@")) i++;
+  return i < lines.length ? lines.slice(i).join("\n") : text;
+}
+
+function countChanged(text) {
+  let add = 0, del = 0;
+  text.split("\n").forEach((ln) => {
+    if (ln.startsWith("+") && !ln.startsWith("+++")) add++;
+    else if (ln.startsWith("-") && !ln.startsWith("---")) del++;
+  });
+  return `+${add} \u2212${del}`;
+}
+
+function diffRows(text) {
   const KIND = {
     "+": "add", "-": "del", "@": "hunk", "d": "fh", "i": "fh",
   };
-  const rows = d.text.split("\n").map((ln) => {
+  return text.split("\n").map((ln) => {
     let k = KIND[ln.charAt(0)] || "";
     /* "---" and "+++" name the file; they are not a removed and an added
        line, and colouring them as such makes every file look rewritten. */
@@ -3418,11 +3545,6 @@ function diffView(d) {
     else if (k === "d" || k === "i") k = "";
     return `<span class="dl ${k}">${esc(ln) || "&nbsp;"}</span>`;
   }).join("");
-
-  return `<section class="thsec"><h3>The change</h3>
-    <div class="diff">${rows}</div>
-    ${d.cut ? `<p class="hint">This is a long one, so the rest is cut. The
-      whole of it is on git.kernel.org.</p>` : ""}</section>`;
 }
 
 function closeThread() {
