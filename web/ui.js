@@ -717,7 +717,11 @@ function grid(id, rows, cols, opts) {
         st.sorts.length > 1 ? `<i>${at + 1}</i>` : ""}</span>` : ""}</th>`;
   }).join("");
 
-  const active = Object.values(st.filters).filter(Boolean).length + (st.q ? 1 : 0);
+  /* What Clear would clear, and -- without the search box, which is not
+     folded away and says for itself what it is doing -- what the folded
+     filter button carries as a number. */
+  const chosen = Object.values(st.filters).filter(Boolean).length;
+  const active = chosen + (st.q ? 1 : 0);
   const pages = Math.max(1, Math.ceil(total / st.per));
 
   return `<div class="panel grid ${st.dense ? "dense" : ""}" data-grid="${id}" data-reveal>
@@ -734,7 +738,13 @@ function grid(id, rows, cols, opts) {
         ${opts.fields ? `<button class="qhelp" ${act(gridHelp, id)}
           title="Query syntax">?</button>` : ""}
       </div>
-      ${(opts.filters || []).map((f) => filterSelect(id, f, rows, st)).join("")}
+      ${(opts.filters || []).length ? `
+        <button class="btn ghost sm filterbtn ${st.filtersOpen ? "on" : ""}"
+          ${act(gridFilters, id)}>
+          \u2632 Filters${chosen ? ` <b>${chosen}</b>` : ""}</button>
+        <div class="filterset ${st.filtersOpen ? "open" : ""}">
+          ${opts.filters.map((f) => filterSelect(id, f, rows, st)).join("")}
+        </div>` : ""}
       ${active ? `<button class="btn ghost sm" ${act(gridClear, id)}>Clear</button>` : ""}
       <div class="spacer"></div>
       ${(opts.groups || []).length ? `<div class="seg" title="Group rows">
@@ -855,6 +865,12 @@ function gridPer(id, n) { GRIDS[id].per = +n; GRIDS[id].page = 1; gridRedraw(id)
 function gridFilter(id, k, v) { GRIDS[id].filters[k] = v; GRIDS[id].page = 1; gridRedraw(id); }
 function gridGroup(id, k) { GRIDS[id].group = k; GRIDS[id].collapsed = []; gridRedraw(id); }
 function gridDense(id) { GRIDS[id].dense = !GRIDS[id].dense; gridRedraw(id); }
+/* Only ever asked on a narrow screen: the button that calls this is not
+   shown on one wide enough to hold the whole row of them. */
+function gridFilters(id) {
+  GRIDS[id].filtersOpen = !GRIDS[id].filtersOpen;
+  gridRedraw(id);
+}
 function gridMenu(id, which) { GRIDS[id].menu = GRIDS[id].menu === which ? "" : which; gridRedraw(id); }
 function gridHelp(id) { gridMenu(id, "help"); }
 

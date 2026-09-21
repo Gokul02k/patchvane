@@ -105,6 +105,21 @@ html, body {
   font-family: var(--sans);
   font-size: 14px; line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* The drawers wait off the right-hand edge rather than being built when
+     they are opened, which is what lets them slide rather than appear.
+     Parked there they are still part of the page, so the page was as wide
+     as the screen plus a drawer: on a desktop that was a stripe of empty
+     background you could scroll to, and on a phone it was the whole
+     layout.  A phone answers a page wider than the screen by zooming out
+     until it fits, so every view was being laid out at 469px and drawn
+     into 390 -- and the drawer, at 100% of that, opened 72px wider than
+     the window and lost a column of text off each edge.
+
+     Clipped, not hidden: hidden makes this a scroll container, which
+     breaks the sticky table headings inside it.  clip is the same
+     promise without the side effect. */
+  overflow-x: hidden;
+  overflow-x: clip;
   /* Jumping to a section should travel there, so the eye keeps its place.
      The reduced-motion block turns this back off. */
   scroll-behavior: smooth;
@@ -339,8 +354,16 @@ nav { position: relative; }
 .out { color: var(--ink-3); font-size: 13px; padding: 0 4px; }
 .out:hover { color: var(--red); text-decoration: none; }
 
-.content { flex: 1; overflow-y: auto; padding: 22px; display: flex;
-  flex-direction: column; gap: 16px; }
+/* The column the page is read in, with a limit on how wide it is allowed to
+   get.  Past about 1700px nothing is gained by stretching: a bar chart of
+   seven states becomes seven hairlines two feet apart, a sentence in a
+   panel header runs the width of the desk, and the eye has to travel the
+   whole monitor to get from a patch to its status.  The scroll bar stays
+   at the edge of the window where it belongs, because it is the padding
+   that grows rather than the column being boxed and centred. */
+.content { flex: 1; overflow-y: auto; display: flex;
+  flex-direction: column; gap: 16px;
+  padding: 22px max(22px, (100% - 1700px) / 2); }
 .content.in { animation: rise var(--t-slow) var(--ease-flow); }
 @keyframes rise {
   from { opacity: 0; transform: translateY(12px) scale(.995);
@@ -521,6 +544,12 @@ select {
   cursor: pointer; max-width: 220px;
 }
 select:focus { outline: none; border-color: var(--blue); }
+
+/* On any screen with room for them the filters are simply part of the
+   toolbar, which is what `display: contents` says: the wrapper is there to
+   be something for the narrow rules to fold, and does nothing here. */
+.filterset { display: contents; }
+.filterbtn { display: none; }
 
 .tablewrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
@@ -1533,15 +1562,76 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
   .tablewrap table { min-width: 540px; }
   thead th, tbody td { padding-left: 11px; padding-right: 11px; }
 
-  /* Rows of choices scroll sideways rather than squeezing or overflowing. */
+  .drawer, .drawer.wide { width: 100%; max-width: 100%; }
+
+  /* A row of counts is a row because comparing them is the point.  Stacked
+     one per screenful they stop being a row at all, and four of them push
+     the thing they are counting off the bottom of the page, so they go two
+     abreast and shrink to the size of a number rather than the size of a
+     card. */
+  .kpis, .kpis.four { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi { padding: 12px 13px 11px; }
+  .kpi .value { font-size: 25px; }
+}
+
+/* ------------------------------------------------- not much room, either way
+
+   A phone held upright and a phone held on its side are the same amount of
+   screen and opposite problems, and the toolbar is where both of them show
+   up: standing, its controls each take a line and push the table off the
+   bottom; lying down, there are only 390 pixels of height and the same
+   controls fill them before a single row is reached.  So this answers both,
+   and the second half of it is also every laptop somebody has a video call
+   open on top of. */
+@media (max-width: 680px), (max-height: 540px) {
+  .toolbar { flex-wrap: wrap; }
+
+  /* Rows of choices scroll sideways rather than squeezing or overflowing.
+     Squeezed, a row of words becomes a column of letters; overflowing, it
+     runs out from under itself and prints over whatever is beside it. */
   .seg, .tabs { overflow-x: auto; scrollbar-width: none; }
   .seg::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }
   .seg button { flex: none; white-space: nowrap; }
+  /* Enough room to read a query in, and whatever is left over goes to the
+     filter button beside it rather than to a line of its own. */
+  .search { min-width: 0; max-width: none; flex: 1 1 165px; }
 
-  .toolbar { flex-wrap: wrap; }
-  .search { min-width: 0; max-width: none; flex: 1 1 100%; }
+  /* Four dropdowns, each on its own line, put the first row of the table a
+     whole screen below the heading that says what the table is.  They fold
+     into a button that says how many of them are doing anything, and open
+     two at a time when somebody wants them -- which on a phone, where the
+     chips above already cover the common filters, is not often. */
+  .filterbtn { display: inline-flex; align-items: center; gap: 6px; order: 2; }
+  .filterbtn b { font-size: 10.5px; font-weight: 700; padding: 0 5px;
+    border-radius: 9px; background: var(--blue); color: #fff; }
+  .filterbtn.on { color: var(--ink); border-color: var(--line-2); }
+  .filterset { display: none; }
+  .filterset.open {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    flex: 1 1 100%; order: 6; animation: unfold var(--t-base) var(--ease-flow);
+  }
+  .filterset.open select { max-width: none; width: 100%; }
 
-  .drawer, .drawer.wide { width: 100%; max-width: 100%; }
+  /* How the rows are grouped, and the three buttons for how they are
+     shown, are both optional and both small.  The group switch already
+     scrolls sideways when it runs out of room, so it can give up the rest
+     of its line to the buttons instead of taking one of its own. */
+  .toolbar .seg { order: 3; flex: 1 1 130px; min-width: 0; }
+  .toolbar .iconbtn.sm { order: 4; flex: none; }
+  .toolbar .spacer { display: none; }
+}
+
+/* The rest of what a short screen needs: everything above the content gets
+   a little shorter, so that what the page is actually for is on it. */
+@media (max-height: 540px) and (min-width: 681px) {
+  :root { --topbar: 52px; }
+  .ttl h1 { font-size: 17px; }
+  .ttl p { display: none; }
+  .content { padding: 12px 14px; gap: 12px; }
+  .panel > header { padding: 11px 15px; }
+  .chipbar { padding: 10px 14px 0; }
+  .toolbar { padding: 10px 14px; }
+  .filterset.open { grid-template-columns: repeat(4, 1fr); }
 }
 
 /* Safari zooms the whole page in when a field it is focusing has text below
@@ -1556,6 +1646,7 @@ html[data-theme="light"] .sky .glow { opacity: .5; filter: blur(80px); }
   /* Hover styling that lights up on first tap and stays lit until you touch
      something else is worse than none. */
   .navitem:hover, .navitem.active:hover { background: transparent; }
+
 }
 .testline.waiting { color: var(--ink-3); }
 
@@ -1937,6 +2028,19 @@ table.plain tr.main:hover, table.plain tr.main:hover + tr.sub {
 
 @media (max-width: 720px) {
   .road .steps { grid-template-columns: 1fr 1fr; }
+  /* Five stages in two columns puts the last one beside a hole, and a hole
+     in a row of cards reads as a card that failed to load. Let whichever
+     one is left over have the width instead. */
+  .step:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+
+/* Two columns of a stage on a small phone is four words of heading stacked
+   over a number, and the counts underneath wrap inside their own pills.
+   One at a time, and each one gets a line worth reading. */
+@media (max-width: 460px) {
+  .road .steps { grid-template-columns: 1fr; }
+  .stepface { padding: 13px 15px 11px; }
+  .steptail { padding: 0 15px 12px; }
 }
 
 /* ============================================================ folded detail */
@@ -2081,3 +2185,46 @@ table.plain tr.main:hover, table.plain tr.main:hover + tr.sub {
   transition: color var(--t-quick);
 }
 .said:hover { color: var(--blue); }
+
+/* ======================================================= made for a thumb
+
+   Last in the file on purpose.  Every rule here has to beat the one it is
+   raising, and several of those are written as `.presets .chip` or appear
+   further down than any sensible place to put a media query, so matching
+   their specificity is not enough on its own -- it has to come after them
+   as well.
+
+   What it is raising them to: a pointer lands exactly where it is aimed,
+   and a fingertip covers about nine millimetres of glass and hides what is
+   under it.  A control the size of the glyph inside it is fine for the
+   first and a guess for the second. */
+@media (hover: none) and (pointer: coarse) {
+  .presets .chip, .chipbar .chip { padding: 8px 13px; }
+  .seg button { padding: 8px 12px; }
+  .pager button { min-width: 34px; height: 34px; }
+  .pager select { padding: 7px 10px; }
+  .steptail button { padding: 7px 11px 7px 9px; }
+  .iconbtn.sm { width: 36px; height: 36px; }
+  .ai-inline { width: 32px; height: 32px; }
+  .pk { padding: 8px 12px; }
+  .switch { width: 48px; height: 30px; }
+  .switch span::before { width: 24px; height: 24px; }
+  .switch input:checked + span::before { transform: translateX(18px); }
+  /* A link in a heading, rather than in a sentence: it is a control, and
+     nineteen pixels of it is a line of text rather than something to
+     press.  The ones inside prose are left alone -- padding a link in the
+     middle of a paragraph makes the paragraph limp. */
+  .panel > header button.link, .toolbar button.link,
+  .steptail button.link, .next button.link { padding: 7px 0; }
+
+  /* The round marks are a different problem: they are meant to be small,
+     because an "i" the size of a button would read as one and the page is
+     already full of buttons.  So the mark stays the size it is drawn and
+     the area that answers a tap grows out past it, which costs nothing on
+     screen and is the difference between a mark you can hit and one you
+     poke at twice. */
+  .infomark { position: relative; }
+  .infomark::after, .search .qhelp::after {
+    content: ""; position: absolute; inset: -9px; border-radius: 50%;
+  }
+}

@@ -92,6 +92,28 @@ followed across a sort. Anything with *reduce motion* set in its system
 gets the same dashboard without any of it, and not merely a faster version:
 the movement stops, the positions do not.
 
+## On a smaller screen
+
+The same dashboard, laid out for what is actually there rather than shrunk.
+On a phone the sidebar lies down along the bottom, where a thumb reaches;
+the road to mainline becomes one stage per line rather than two half-legible
+columns; counts go two abreast; and the filters above a table fold into a
+button carrying the number of them that are doing anything, so the first row
+of the table is on the first screen instead of a screen below it. Tables
+themselves keep columns wide enough to read and scroll sideways, which is
+the one place sideways scrolling is the right answer.
+
+A phone on its side is the opposite problem — width to spare, 390 pixels of
+height — so the same folding happens on any short screen, along with a
+shorter top bar. That case is also every laptop with a video call parked on
+top of the browser.
+
+Everything that gets pressed is sized for a fingertip rather than for a
+cursor, and the small round *i* marks keep the size they are drawn while the
+area that answers a tap grows out past them. Past about 1700 pixels the page
+stops widening: seven states drawn two feet apart are not easier to compare
+than seven drawn a hand apart.
+
 ## One patch, counted once
 
 A series sent as v1, corrected, and sent again as v2 is two postings and one
