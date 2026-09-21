@@ -1277,8 +1277,9 @@ def build_digest(d: dict) -> str:
 def current_patches(patches: list) -> list:
     """One row per patch rather than one per posting.
 
-    The same rule the page uses: the version that landed if any did, else
-    the newest sent."""
+    The same rule the page uses, in roster(): the newest posting speaks,
+    and if a maintainer took an earlier one, that landing travels to the
+    row that speaks rather than taking the row back to where it was."""
     groups = {}
     for p in patches:
         groups.setdefault(p.get("key") or p.get("msgid") or p["subject"],
@@ -1287,8 +1288,15 @@ def current_patches(patches: list) -> list:
     for rows in groups.values():
         rows = sorted(rows, key=lambda q: (q.get("version") or 1,
                                            q.get("date") or ""))
+        newest = rows[-1]
         landed = [q for q in rows if q.get("landed")]
-        speaks = dict(landed[-1] if landed else rows[-1])
+        took = landed[-1] if landed else None
+        speaks = dict(newest)
+        if took is not None and took is not newest:
+            speaks["landed"] = took.get("landed")
+            speaks["state"] = took.get("state")
+            speaks["state_detail"] = took.get("state_detail")
+            speaks["tree_hint"] = newest.get("tree_hint") or took.get("tree_hint")
         speaks["_sent"] = len(rows)
         out.append(speaks)
     return sorted(out, key=lambda q: q.get("date") or "", reverse=True)

@@ -672,6 +672,31 @@ def commit(cid: str, tree: str = "mainline") -> dict:
     cid = (cid or "").strip().lower()
     if not SHA.match(cid):
         return {"ok": False, "error": "That is not a commit id."}
+    if not (TREES.get(tree) or MAINTAINER_TREES.get(tree)):
+        return {"ok": False, "error": "That is not a tree this server reads."}
+
+    # Patchwork records whichever tree the maintainer applied it to, and a
+    # commit named without one is guessed at as mainline, so a fair number
+    # of the ids clicked on this site are not in the tree they are asked
+    # for.  linux-next carries most of the maintainer trees, so it is the
+    # one worth a second ask before giving up; the extra request only
+    # happens when the first one found nothing.
+    got = _commit_in(cid, tree)
+    if got["ok"] or not got.get("missing"):
+        got.pop("missing", None)
+        return got
+    for other in ("linux-next", "mainline"):
+        if other == tree:
+            continue
+        second = _commit_in(cid, other)
+        if second["ok"]:
+            return second
+    got.pop("missing", None)
+    return got
+
+
+def _commit_in(cid: str, tree: str) -> dict:
+    """The same commit, read out of one named tree."""
     path = TREES.get(tree) or MAINTAINER_TREES.get(tree)
     if not path:
         return {"ok": False, "error": "That is not a tree this server reads."}
@@ -730,8 +755,10 @@ def commit(cid: str, tree: str = "mainline") -> dict:
                 "error": "git.kernel.org did not answer for that commit."}
     if not out.get("subject") and not out.get("body"):
         # The page came back but was not a commit page -- a bad id gives
-        # cgit's error page, which is a 200.
-        return {"ok": False, "url": url,
+        # cgit's error page, which is a 200.  Said apart from the host not
+        # answering, because only this one is worth asking another tree
+        # about: a tree that did not answer has not said anything.
+        return {"ok": False, "url": url, "missing": True,
                 "error": "No commit with that id in %s." % tree}
     return out
 

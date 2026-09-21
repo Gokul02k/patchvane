@@ -136,9 +136,27 @@ function roster(patches) {
     const sorted = rows.slice().sort(
       (a, b) => (a.version || 1) - (b.version || 1)
              || String(a.date || "").localeCompare(String(b.date || "")));
-    const landed = sorted.filter((p) => (p.landed || []).length);
-    const speaks = landed.length ? landed[landed.length - 1]
-                                 : sorted[sorted.length - 1];
+    const newest = sorted[sorted.length - 1];
+    /* The collection gives the commit to exactly one posting, so there is
+       at most one of these. */
+    const took = sorted.filter((p) => (p.landed || []).length).pop();
+
+    /* Usually the version that landed is the last one sent and there is
+       nothing to choose between. When it is not -- a maintainer took v1
+       and a v3 went out afterwards -- the landing is a fact about the
+       patch rather than about that one posting, so it travels to the row
+       that speaks instead of taking the row with it. Letting the older
+       posting speak instead put the wrong version and the wrong date on
+       a patch somebody had sent again three days ago. */
+    let speaks = newest;
+    if (took && took !== newest) {
+      speaks = Object.assign({}, newest, {
+        landed: took.landed,
+        state: took.state,
+        state_detail: took.state_detail,
+        tree_hint: newest.tree_hint || took.tree_hint,
+      });
+    }
     out.push(sorted.length > 1
       ? Object.assign({}, speaks, { sent: sorted.length })
       : speaks);
@@ -1905,11 +1923,17 @@ function feedbackPanel() {
         say below.`)}</header>
     <div class="body">
       ${s.sent ? `<div class="sentnote">
-        <strong>Thank you \u2014 that is written down.</strong>
-        <p>${esc(s.sent.told
-          ? "It has gone to whoever runs this, and you will hear back here."
-          : "It is waiting for whoever runs this, and you will hear back "
-            + "here.")}</p>
+        <strong>${esc(s.sent.stored
+          ? "Thank you \u2014 that is written down."
+          : "Thank you \u2014 that has been passed on.")}</strong>
+        <p>${esc(!s.sent.stored
+          ? "This deployment could not file it here, so it went straight "
+            + "to whoever runs it. Any answer will come by mail rather "
+            + "than appearing below."
+          : s.sent.told
+            ? "It has gone to whoever runs this, and you will hear back here."
+            : "It is waiting for whoever runs this, and you will hear back "
+              + "here.")}</p>
         ${s.sent.link ? `<a class="btn sm" href="${esc(s.sent.link)}"
           target="_blank" rel="noreferrer">See the issue \u2197</a>` : ""}
         <button class="btn ghost sm" ${act(feedbackAgain)}>Write another</button>

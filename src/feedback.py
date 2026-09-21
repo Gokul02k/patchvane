@@ -137,7 +137,9 @@ def record(text: str, kind: str, who: str = "", name: str = "",
     with _LOCK:
         rows = _read()
         rows.insert(0, row)
-        _write(rows[:2000])
+        # Whether it really was written down is the one thing this has to
+        # be honest about: told that it was kept, nobody sends it twice.
+        row["_kept"] = _write(rows[:2000])
     return row
 
 
@@ -321,7 +323,8 @@ def deliver(text: str, kind: str, who: str = "", name: str = "",
         return {"ok": False, "error": "Say what kind of thing this is."}
 
     row = record(text, kind, who=who, name=name, where=where)
-    out = {"ok": True, "id": row["id"], "kind": kind, "stored": True}
+    kept = row.pop("_kept", False)
+    out = {"ok": True, "id": row["id"], "kind": kind, "stored": kept}
 
     # An issue only if they asked for one and the tracker exists: a GitHub
     # issue is public, and that is not a thing to do to somebody's words
@@ -334,4 +337,13 @@ def deliver(text: str, kind: str, who: str = "", name: str = "",
     if routes()["mail"]:
         sent, _why, _ = as_mail(text, who, kind, log=log)
         out["told"] = sent
+
+    # Nothing kept it and nothing carried it: that is a failure, and saying
+    # thank you for it is how a report is lost twice -- once here, and
+    # again when the person who wrote it does not write it a second time.
+    if not (out["stored"] or out.get("told") or out.get("link")):
+        return {"ok": False,
+                "error": "This could not be written down or passed on. "
+                         "Nothing was kept, so please say it to whoever "
+                         "runs this another way."}
     return out
