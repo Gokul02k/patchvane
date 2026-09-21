@@ -63,20 +63,50 @@ no reply yet  →  in discussion  →  reviewed  →  accepted
 took it and it is lined up for the next merge window. `in maintainer tree`
 means it is in their tree but has not reached linux-next yet.
 
-## The seven sections
+## The eight sections
 
 | | |
 | --- | --- |
-| **Overview** | Where everything stands, with the numbers adding up to the total |
+| **Overview** | How far each patch got, and where every one of them stands now |
 | **Your turn** | Threads owed a reply, series owed a new version, and your own notes |
-| **Patches** | Every patch, filtered by status, subsystem or tree |
+| **Patches** | Every patch, filtered by stage, status, subsystem or tree |
 | **Outcomes** | What landed and where it sits, and what was dropped and why |
 | **Discussions** | Threads, the people who replied, and the review tags you collected |
 | **Insights** | When you post, which subsystems you touch, how each tree is doing |
-| **Settings** | Refresh schedule, the assistant, and the health of each source |
+| **Discover** | Anybody else's patches, and who to send yours to |
+| **Settings** | Refresh schedule, the assistant, the sources, and support |
 
-Press `?` for the keyboard shortcuts. `1` to `7` jump between sections, `/`
-searches the table on screen, `a` opens the assistant, `r` refreshes.
+Everything is reached by clicking it. There are no keyboard shortcuts to
+learn: single letters used to jump between sections and open things, which
+meant that typing into a page that had quietly lost focus did something
+surprising. Escape still closes whatever is open, because that is what
+Escape means everywhere else.
+
+Moving between them is animated, and the animation is doing a job rather
+than decorating one. The highlight in the sidebar travels from the section
+you left to the one you asked for, so it is clear which of the two you are
+looking at; the page you are leaving goes out of focus as the new one
+settles, which is what keeps a redraw from reading as a page load; a table
+that reorders itself slides its rows to their new places so a row can be
+followed across a sort. Anything with *reduce motion* set in its system
+gets the same dashboard without any of it, and not merely a faster version:
+the movement stops, the positions do not.
+
+## One patch, counted once
+
+A series sent as v1, corrected, and sent again as v2 is two postings and one
+patch. The collection keeps both postings — the history is worth having —
+but only one of them speaks for the work: the version that landed if any
+did, and otherwise the newest one sent.
+
+Every number on the site is counted over that set. Without it the page said
+423 patches where 359 had been written, filed the abandoned v1 under
+**Dropped** while v2 sat in mainline, and left the sidebar, the road, the
+buckets and the tables each confidently disagreeing with the others.
+
+The versions behind a patch are not lost. The row says how many times it was
+sent, the patch opens on all of them, and **Patches** says how many of the
+set were sent more than once.
 
 ## What the buckets mean
 
@@ -96,9 +126,33 @@ Clicking a bucket opens exactly those patches. If a patch ever lands in a
 state the dashboard does not know about it appears as **Unaccounted** rather
 than quietly going missing from the total.
 
-The funnel above it is a different thing: it counts how far each patch got,
-so a patch in mainline is also counted at every earlier stage. Only the
-buckets are meant to add up.
+## The road to mainline
+
+The road above the buckets answers a different question: not where a patch
+is, but how far it got.
+
+| Stage | Reached it by |
+|---|---|
+| Written and sent | being posted to a kernel list |
+| Somebody answered | a reply coming back, or review starting |
+| A maintainer took it | being applied to a tree, or marked accepted |
+| Queued in linux-next | being lined up for the next merge window |
+| In mainline | the commit being in Linus' tree |
+
+The stages are cumulative, so a patch in mainline is counted at all five and
+the numbers narrow from left to right. Only the buckets are meant to add up.
+
+Each stage says three things, because they are three different questions.
+**Through** is how many got at least this far, and clicking it opens them.
+**Sitting here** is how many got this far and no further and are still
+alive. **Dropped** is how many reached this stage and then stopped for good,
+and the dustbin beside it opens exactly those, so "what happened to the ones
+people replied to and then nothing" is a question you can press rather than
+one you have to reconstruct.
+
+The overview used to carry four counters above this saying much the same
+thing in fewer words. They are gone: two ways of counting the same work,
+side by side, is how a page ends up arguing with itself.
 
 **Your turn** is what you owe the lists: threads where somebody asked you
 something last, and series where changes were requested, each with the
@@ -151,3 +205,49 @@ in the corner for the original.
 Nothing is fetched until you ask for it, and the message id is checked
 against your own patches first, so the endpoint cannot be used to fetch
 arbitrary threads or to find out what anybody else is tracking.
+
+Clicking a commit id opens the commit the same way, and it carries the diff:
+the message, the trees that hold it, and then the patch itself, coloured the
+way a diff has to be coloured to be read at all. It is read live from
+git.kernel.org, so a commit opened when that host cannot be reached says so
+instead of showing an empty change. Diffs that run to hundreds of kilobytes
+are cut at a file boundary, with a link to cgit for the rest.
+
+### Narrowing a list
+
+Every list has a dropdown for each column worth grouping by, and every
+option in one says how many rows it would leave: `linux-next (64)`,
+`Rejected (16)`, `dropped at Somebody answered (15)`. An option that would
+leave nothing is not offered.
+
+They are built from the rows on screen rather than written out by hand, so
+a list and its filters cannot fall out of step, and the same dropdown
+appears on the patch list, the commits, the threads, the review tags, the
+Discover tables and the feedback. The search box beside them still takes
+`tree:net-next` and the like, and **Clear** puts everything back.
+
+## Telling whoever runs it that something is wrong
+
+**Settings → Support** answers the common questions first — the ones that
+are usually a misunderstanding rather than a bug — and then takes what you
+write. It asks what kind of thing it is only after you have described it,
+because being made to classify something before describing it is how
+feature requests get filed as bugs.
+
+Every report is written down on the deployment first, and only then passed
+on by mail or filed as an issue if that has been set up. That order matters:
+the page used to tell people there was "nowhere for this to go" on a
+deployment with neither, which is a strange thing to say to somebody who has
+just found a bug.
+
+Whoever the deployment belongs to — the one address in `PATCHVANE_OWNER` —
+gets a **Feedback** tab listing everything sent, filtered by kind, status,
+page or person. Answering one sets where it stands (read, being worked on,
+done, not going to change, waiting on you) and can add a note. Both go back
+to whoever wrote it: by mail if the deployment can send mail, and on their
+own Support tab either way, so a report is never a message dropped into a
+hole.
+
+The tab is not the permission. The server decides who the owner is and
+checks it again on every request, so a drawn tab and a reachable endpoint
+are the same question asked twice.

@@ -11,10 +11,24 @@ The instance is expected to have the account already: making one means
 reading a code out of a mailbox, which is not something to automate here.
 Run the throwaway server, sign up once by hand, then set SHOTS_USER and
 SHOTS_PASSWORD to what you chose.
+
+Pages are reached by clicking what a reader would click.  There is nothing
+to type at: the dashboard has no keyboard shortcuts, so a script that
+pressed "3" for the patch list would now be pressing it into the page.
+
+Set SHOTS_INVENTED to a collection file to shoot an instance filled with
+invented work.  Three panels read live hosts rather than the collection --
+the patch drawer, the commit drawer and Discover -- and none of them can
+answer for a message id that was never posted.  With that set they are
+answered from the same invented collection instead, in the shape the
+server would have used; see tools/shots_invented.py.
 """
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import shots_invented
 from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("SHOTS_BASE", "http://127.0.0.1:8901")
@@ -22,6 +36,10 @@ USER = os.environ.get("SHOTS_USER", "")
 PASSWORD = os.environ.get("SHOTS_PASSWORD", "")
 TRACK = os.environ.get("SHOTS_TRACK", "")
 SHOWN = os.environ.get("SHOTS_SHOWN", "you@example.org")
+# Somebody to look up on Discover.  Any address with public patches does.
+FIND = os.environ.get("SHOTS_FIND", "tj@kernel.org")
+# A collection to answer the live panels from, rather than lore.
+INVENTED = os.environ.get("SHOTS_INVENTED", "")
 
 if not TRACK:
     sys.exit("Set SHOTS_TRACK to the address whose dashboard should be shot.")
@@ -56,9 +74,15 @@ MASK = """
 """
 
 
-def shoot(page, name, wait=2200):
-    """Mask the address, then capture what is on screen."""
+def shoot(page, name, wait=2200, at=""):
+    """Mask the address, then capture what is on screen.
+
+    `at` frames a panel further down the page.  It happens after the wait
+    rather than before it: a view that is still fetching redraws itself
+    when the answer lands, and a redraw puts the scroll back to the top."""
     page.wait_for_timeout(wait)
+    if at:
+        scroll_to(page, at)
     page.evaluate(MASK, [TRACK, SHOWN])
     page.wait_for_timeout(250)
     dest = os.path.join(OUT, name)
@@ -66,10 +90,40 @@ def shoot(page, name, wait=2200):
     print("wrote %s (%d KB)" % (name, os.path.getsize(dest) // 1024))
 
 
-def view(page, key, name, wait=2600):
-    """Views are keyboard-switched, 1..7 down the sidebar."""
-    page.keyboard.press(key)
+def view(page, label, name, wait=2600):
+    """A section, reached the way a reader reaches it: by clicking it."""
+    page.click(".navitem:has-text('%s')" % label)
     shoot(page, name, wait=wait)
+
+
+def tab(page, label):
+    """One of the tabs inside a section."""
+    page.click(".tabs button:has-text('%s')" % label)
+    page.wait_for_timeout(900)
+
+
+def scroll_to(page, heading, above=150):
+    """Put a panel below the fold at the top of the shot.
+
+    `above` leaves room for the bar the page keeps pinned there, which
+    would otherwise sit over the heading being framed."""
+    found = page.evaluate(
+        """([text, above]) => {
+             const h = [...document.querySelectorAll('h2, h3')]
+               .find(e => e.textContent.includes(text));
+             if (!h) return false;
+             const box = h.closest('.panel') || h;
+             box.scrollIntoView({ block: 'start', behavior: 'instant' });
+             // Whichever of the two actually scrolls: the bar pinned to the
+             // top of the page would otherwise sit over the heading.
+             const pane = document.querySelector('.content');
+             if (pane) pane.scrollBy(0, -above);
+             window.scrollBy(0, -above);
+             return true;
+           }""", [heading, above])
+    if not found:
+        print("nothing headed %r to scroll to" % heading, file=sys.stderr)
+    page.wait_for_timeout(700)
 
 
 def main():
@@ -79,6 +133,11 @@ def main():
         ctx = browser.new_context(viewport={"width": 1440, "height": 900},
                                   device_scale_factor=2)
         page = ctx.new_page()
+
+        find = FIND
+        if INVENTED:
+            shots_invented.install(page, INVENTED)
+            find = shots_invented.WHO
 
         page.goto(BASE + "/login", wait_until="networkidle")
         page.screenshot(path=os.path.join(OUT, "shot-login.png"))
@@ -96,12 +155,69 @@ def main():
             return 1
 
         shoot(page, "shot-dashboard.png", wait=5000)
-        view(page, "2", "shot-your-turn.png")
-        view(page, "3", "shot-patches.png")
-        view(page, "6", "shot-insights.png")
 
-        # Same overview again in the light theme.
-        page.keyboard.press("1")
+        view(page, "Your turn", "shot-your-turn.png")
+        view(page, "Patches", "shot-patches.png")
+
+        # The same list, narrowed to what was dropped after somebody had
+        # already replied to it: what the dustbins on the road open.
+        page.evaluate("() => showStage('answered', 'lost')")
+        shoot(page, "shot-filtered.png", wait=1800)
+
+        view(page, "Outcomes", "shot-outcomes.png")
+        tab(page, "Dropped")
+        shoot(page, "shot-dropped.png", wait=1400)
+
+        view(page, "Discussions", "shot-discussions.png")
+        view(page, "Insights", "shot-insights.png")
+
+        # A patch, read where it was clicked rather than on lore.
+        page.click(".navitem:has-text('Patches')")
+        page.wait_for_timeout(1500)
+        page.click("table .subject a", timeout=15000)
+        shoot(page, "shot-thread.png", wait=9000)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(600)
+
+        # A commit, with the diff in it.  Read live from git.kernel.org
+        # unless SHOTS_INVENTED says otherwise, so a network that cannot
+        # reach it gets the drawer's own apology instead of a diff.
+        page.click(".navitem:has-text('Outcomes')")
+        page.wait_for_timeout(1500)
+        tab(page, "Landed")
+        if INVENTED:
+            # The one commit whose invented diff matches its subject, asked
+            # for by name rather than by clicking whichever row is first.
+            cid, tree, _ = shots_invented.picked(INVENTED)
+            page.evaluate("([c, t]) => openCommit(c, t)", [cid, tree])
+        else:
+            page.click("table a.mono", timeout=15000)
+        shoot(page, "shot-commit.png", wait=9000)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(600)
+
+        view(page, "Discover", "shot-discover-empty.png", wait=1500)
+        page.fill("input[data-find='q']", find)
+        page.keyboard.press("Enter")
+        # The two patchwork lists are the point of the page and they sit
+        # below the counts, so frame them rather than the top of it.
+        shoot(page, "shot-discover.png", wait=22000,
+              at="Accepted by a maintainer")
+
+        page.evaluate("() => go('settings')")
+        page.wait_for_timeout(1500)
+        shoot(page, "shot-settings.png", wait=1200)
+        tab(page, "Support")
+        page.wait_for_timeout(2000)
+        page.fill("#fbtext", "The road to mainline counts a patch I sent "
+                             "twice as one, which is right, but the pill on "
+                             "the row still says v1.")
+        shoot(page, "shot-support.png", wait=1200, at="Tell us something")
+        tab(page, "Feedback")
+        shoot(page, "shot-feedback.png", wait=2200)
+
+        # The overview again, in the other theme.
+        page.evaluate("() => go('overview')")
         page.wait_for_timeout(1200)
         page.evaluate("() => { document.documentElement.dataset.theme = 'light';"
                       " localStorage.setItem('patchvane-theme','light'); }")

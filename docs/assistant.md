@@ -46,8 +46,9 @@ I say back", then "and the hyperv one?", and each lands where you meant it.
 Anything you tell it that the dashboard does not know, such as a request made
 off-list, it takes at its word for the rest of the conversation.
 
-Every question also carries a digest of the whole contribution: the totals, the
-trees, what landed, the threads waiting on you, and one line per patch. That is
+Every question also carries a digest of the whole contribution: where the
+kernel itself is up to, the totals, the trees, what landed, the threads
+waiting on you, and one line per patch. That is
 enough for "how many" and "where does this stand", and not enough for "what did
 the reviewer ask me to change", because the asking happened in a message a
 summary has no room for. So the threads your question is about are looked up
@@ -57,6 +58,42 @@ actually wrote.
 
 Your own notes are in the digest too, which is worth remembering when the
 answer cites a rule you wrote down somewhere else.
+
+## Counting, and version numbers
+
+Two kinds of question were being answered from the wrong place, and both are
+fixed by putting the right facts in the digest rather than by asking the
+model to try harder.
+
+**How many.** The totals in the digest are counted the way the dashboard
+counts: one row per patch, at the version that speaks for it. A v1 replaced
+by a v2 is one patch and is not a dropped one. The digest says so in as many
+words, and also says how many mails it took to post them, so "how many
+patches have I written" and "how many did I send" stay different questions
+with different answers instead of the model picking whichever number it
+found first.
+
+**Which release.** Asked what comes after v7.3-rc4, a model answered v7.4 —
+which is what happens when a question about kernel version numbers is
+answered from training data rather than from the tree. So the digest opens
+with today's tags, read from git.kernel.org:
+
+```
+## The kernel itself, right now
+- the newest tag in Linus' tree is v7.3-rc4
+- the newest finished release is v7.2
+- v7.3 is the release being built. It is at rc4 and is not out yet.
+- the tag after v7.3-rc4 is v7.3-rc5. When Linus decides the rcs are done,
+  the one after that is v7.3 itself, with no rc. So the answer to "what
+  comes next" is v7.3-rc5 or v7.3 -- it is not v7.4.
+- the merge window for v7.3 has already closed, so new features posted now
+  are aimed at v7.4 ...
+- answer any question about kernel version numbers from these lines. Do not
+  answer it from memory: this tree moves, and these are today's tags.
+```
+
+The rule itself is not hard. Being told it, with the numbers of the day
+attached, is what makes the difference between an answer and a guess.
 
 ## Picking a model
 

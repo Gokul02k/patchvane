@@ -58,8 +58,9 @@ web/
 docs/           this documentation, and images/ holds the logo, the banner
                 and the screenshots it shows
 tools/          how those are made: shots.py drives a headless browser over a
-                throwaway instance, preview_readme.py renders the README the
-                way GitHub will
+                throwaway instance, shots_invented.py answers the three
+                panels that would otherwise read a live host, and
+                preview_readme.py renders the README the way GitHub will
 deploy/         systemd unit, Caddy configuration and the two scripts that
                 set up and update a server
 

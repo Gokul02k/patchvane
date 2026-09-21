@@ -45,8 +45,8 @@ mailbox to keep, no folder to point it at.
 
 ### &#127937; It follows
 
-Posted, reviewed, accepted, into linux-next, into mainline. Each patch is in
-exactly one bucket, and the buckets add up.
+Posted, answered, taken, into linux-next, into mainline. Each patch is
+counted once, at the version that speaks for it.
 
 </td>
 <td width="33%" valign="top">
@@ -68,9 +68,17 @@ version, on their own page.
   <img src="docs/images/shot-dashboard.png" alt="The overview page" width="900">
 </picture>
 
-<sub>The overview: where everything stands today. <a href="docs/screenshots.md">The rest of the pages</a>.</sub>
+<sub>The overview: how far each patch got, and where every one of them stands
+today. The work shown is invented, not anybody's record.
+<a href="docs/screenshots.md">The rest of the pages</a>.</sub>
 
 </div>
+
+A patch sent as v1 and again as v2 is one patch, not two. Every number on
+every page is counted over that set, so the road, the buckets, the sidebar
+and the lists cannot disagree with each other. Each stage of the road opens
+the patches behind it, and the dustbin under a stage opens the ones that
+reached it and then stopped for good.
 
 ## Running it
 
