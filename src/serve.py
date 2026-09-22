@@ -59,6 +59,7 @@ import feedback
 import mailer
 import providers
 import redact
+import releases
 import vault
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1206,11 +1207,14 @@ def kernel_now() -> list:
            "- the newest tag in Linus' tree is %s" % latest,
            "- the newest finished release is %s" % (shipped[-1] if shipped
                                                     else "unknown")]
-    m = re.match(r"^(v\d+)\.(\d+)-rc(\d+)$", latest)
+    m = releases.RC.match(latest)
     if m:
-        major, minor, n = m.group(1), int(m.group(2)), int(m.group(3))
-        series = "%s.%d" % (major, minor)
-        after = "%s.%d" % (major, minor + 1)
+        major, minor, n = (int(x) for x in m.groups())
+        series = "v%d.%d" % (major, minor)
+        # Not minor + 1 unconditionally: after v7.19 comes v8.0, and a
+        # confident "v7.20" in the digest is exactly the kind of invented
+        # version number these lines exist to stop.
+        after = releases.next_version(major, minor + 1)
         out += [
             "- %s is the release being built. It is at rc%d and is not out "
             "yet." % (series, n),

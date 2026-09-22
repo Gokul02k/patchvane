@@ -46,6 +46,7 @@ from email.header import decode_header, make_header
 
 import aiclass
 import providers
+import releases
 import vault
 from email.utils import parsedate_to_datetime
 
@@ -682,6 +683,59 @@ def unquoted(text: str) -> str:
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
 
 
+# Where kernel mailing lists live.  A patch sent only to addresses under
+# these went to rooms rather than to people.
+LIST_HOSTS = ("vger.kernel.org", "lists.linux.dev", "lists.infradead.org",
+              "lists.freedesktop.org", "lists.ozlabs.org", "alsa-project.org",
+              "lists.linux-foundation.org", "linux-foundation.org",
+              "lists.sourceforge.net", "nongnu.org", "linuxtv.org",
+              "lists.xenproject.org", "openvz.org", "lists.osuosl.org",
+              "kvack.org", "zx2c4.com", "lists.denx.de", "mailman.alsa-project.org")
+
+
+def is_list(address: str) -> bool:
+    """A mailing list rather than a person.
+
+    The host answers for nearly all of it.  The stragglers are the handful
+    of projects that run a list on their own domain, and they give
+    themselves away in the local part: nobody is called "linux-mtd" and no
+    list is called "gregkh"."""
+    a = (address or "").lower()
+    host = a.rsplit("@", 1)[-1]
+    if host.endswith(LIST_HOSTS) or any(host == h for h in LIST_HOSTS):
+        return True
+    local = a.split("@", 1)[0]
+    return (local.startswith("linux-") or local.endswith("-devel")
+            or local.endswith("-dev") or local.endswith("-list")
+            or local in ("netdev", "kvm", "bpf", "dri-devel", "cgroups",
+                         "ceph-devel", "selinux", "workflows"))
+
+
+def copied(m) -> list:
+    """The people on To: and Cc:, mailing lists left out.
+
+    A patch that went to a list and nobody else is a patch that no
+    maintainer was asked to look at, which is the commonest way for one to
+    get no reply at all.  Recorded so the difference can be seen."""
+    out, seen = [], set()
+    for field in ("To", "Cc"):
+        for raw in (dec(m.get(field)) or "").split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            a = addr_of(raw)
+            # Compared whole rather than as a substring: this is a bare
+            # address, so there is a right answer, and "ME in a" quietly
+            # matches every address in the world when no owner is set.
+            if not a or a in seen or a.lower() == ME or is_list(a):
+                continue
+            seen.add(a)
+            out.append({"addr": a, "name": name_of(raw) or a})
+            if len(out) >= 12:
+                return out
+    return out
+
+
 def fetch_thread(f: Fetcher, msgid: str, depth: int = 1) -> list:
     """Every message in the thread that holds this message id.
 
@@ -771,6 +825,11 @@ def _fetch_thread_once(f: Fetcher, msgid: str) -> list:
             "subject": subject,
             "date": parse_date(m.get("Date")),
             "list": list_from_id(m.get("List-Id") or ""),
+            # Only for our own postings, and only the people.  Who a
+            # maintainer copied on their reply is their business; who we
+            # copied is the difference between a patch nobody answered and
+            # a patch nobody was asked.
+            "to": copied(m) if mine else [],
             "mine": mine,
             "bot": is_bot(frm),
             "tags": tags,
@@ -1163,59 +1222,6 @@ def relevant_trees(out: dict) -> set:
     return wanted
 
 
-TAG_ROW = re.compile(r"/tag/\?h=(v[0-9][^']*)'>[^<]*</a>.*?data-ut='(\d+)'",
-                     re.S)
-FINAL_TAG = re.compile(r"^v(\d+)\.(\d+)$")
-RC_TAG = re.compile(r"^v(\d+)\.(\d+)-rc(\d+)$")
-DAY = 86400
-
-
-def next_version(major: int, minor: int) -> str:
-    """What Linus calls the release after this one.
-
-    He has never announced a rule, but he has bumped the major number at
-    the same place every time -- 3.19, 4.20 and 5.19 were each followed by
-    a .0 -- on the stated grounds that he runs out of fingers and toes.
-    Below that the minor simply goes up."""
-    return "v%d.0" % (major + 1) if minor >= 19 else "v%d.%d" % (major, minor)
-
-
-def cycle_shape(tags: list) -> tuple:
-    """How long a release has taken lately, measured rather than assumed.
-
-    Everybody says seven release candidates and two weeks of merge window,
-    and it is usually true, but an -rc8 happens often enough that quoting
-    the folklore would put a date on screen that the tree disagrees with.
-    These come from the last ten releases in the tree being read, so a
-    cycle that is running long says so on its own."""
-    finals = [(n, t) for n, t in tags if FINAL_TAG.match(n)]
-    rc1s = {RC_TAG.match(n).group(1) + "." + RC_TAG.match(n).group(2): t
-            for n, t in tags if RC_TAG.match(n)
-            and RC_TAG.match(n).group(3) == "1"}
-    stabilise, window, rcs = [], [], []
-    for i, (name, when) in enumerate(finals):
-        m = FINAL_TAG.match(name)
-        key = "%s.%s" % (m.group(1), m.group(2))
-        if key in rc1s:
-            stabilise.append(when - rc1s[key])
-            rcs.append(sum(1 for n, _ in tags if RC_TAG.match(n)
-                           and RC_TAG.match(n).group(1) + "."
-                           + RC_TAG.match(n).group(2) == key))
-        # The merge window is the gap between a release and the next -rc1.
-        later = [t for k, t in rc1s.items() if t > when]
-        if later:
-            window.append(min(later) - when)
-
-    def mid(xs, fallback):
-        # The last ten releases, then the middle of those.  Slicing a sorted
-        # list would take the ten longest cycles instead, which is a
-        # different question and answers it too slowly by a fortnight.
-        recent = sorted(xs[-10:])
-        return recent[len(recent) // 2] if recent else fallback
-
-    return (mid(stabilise, 49 * DAY), mid(window, 14 * DAY), mid(rcs, 7))
-
-
 def collect_cycle(f: Fetcher) -> dict:
     """Where the kernel is in its own release cycle.
 
@@ -1224,47 +1230,14 @@ def collect_cycle(f: Fetcher) -> dict:
     changes what any of it means: during the merge window a maintainer is
     sending pull requests to Linus rather than reading the list, so silence
     on a patch is the system working normally and a ping is just noise.  At
-    -rc5 the same silence on the same patch is worth chasing.
-
-    Dates are read off the tags rather than counted forward from a rule,
-    because the rule has exceptions and the tags do not."""
+    -rc5 the same silence on the same patch is worth chasing."""
     cfg = CONFIG.get("korg") or {}
     mainline = (cfg.get("always") or {}).get("mainline")
     if not cfg.get("enabled") or not mainline:
         return {}
     body = f.get("%s%s/refs/tags/" % (cfg["base"], mainline), timeout=90,
                  ttl=6 * 3600)
-    if not body:
-        return {}
-    tags = sorted(((n, int(t)) for n, t in TAG_ROW.findall(body)),
-                  key=lambda x: x[1])
-    tags = [(n, t) for n, t in tags if FINAL_TAG.match(n) or RC_TAG.match(n)]
-    if not tags:
-        return {}
-
-    stabilise, window, rcs = cycle_shape(tags)
-    name, when = tags[-1]
-    day = lambda ts: time.strftime("%Y-%m-%d", time.gmtime(ts))
-    out = {"tag": name, "tagged": day(when), "rcs_usual": rcs,
-           "estimated": True}
-
-    rc = RC_TAG.match(name)
-    if rc:
-        # Stabilising one release, which means the window for the next one
-        # opens when this one ships.
-        major, minor, n = (int(x) for x in rc.groups())
-        rc1 = next((t for m, t in tags
-                    if m == "v%d.%d-rc1" % (major, minor)), when)
-        out.update({"phase": "rc", "version": "v%d.%d" % (major, minor),
-                    "rc": n, "next": next_version(major, minor + 1),
-                    "opens": day(rc1 + stabilise),
-                    "closes": day(rc1 + stabilise + window)})
-    else:
-        major, minor = (int(x) for x in FINAL_TAG.match(name).groups())
-        out.update({"phase": "merge-window", "version": name, "rc": 0,
-                    "next": next_version(major, minor + 1),
-                    "opens": day(when), "closes": day(when + window)})
-    return out
+    return releases.cycle_of(releases.parse_tags(body)) if body else {}
 
 
 def collect_korg(f: Fetcher, out: dict, quick: bool = False,
@@ -1528,6 +1501,19 @@ def build(out: dict, brain=None) -> dict:
             mine_replies = replies_for.get(m["msgid"], [])
             tags = [t for r in mine_replies for t in r["tags"]]
 
+            # Who actually said something, as against who gave a tag.  A
+            # maintainer who reads a patch and asks for a change has
+            # engaged with it; counting only Reviewed-by would score that
+            # the same as never opening it.  Replies to the cover count,
+            # because that is where a series gets answered.
+            answered_by, spoke = [], set()
+            for r in mine_replies + cover_replies:
+                if r["bot"] or not r["addr"] or r["addr"] in spoke:
+                    continue
+                spoke.add(r["addr"])
+                answered_by.append({"addr": r["addr"],
+                                    "name": r["name"] or r["addr"]})
+
             state, detail, firm = classify(pwrec, where, mine_replies, m,
                                            cover_replies)
             # Kept aside so that, once every version of every patch is known,
@@ -1551,6 +1537,10 @@ def build(out: dict, brain=None) -> dict:
                 "tree_hint": tree_hint,
                 "list": listname,
                 "date": m["date"],
+                # The posting index is an atom feed and carries no headers,
+                # so who was copied has to come from the message itself.
+                "to": (by_msgid.get(m["msgid"]) or {}).get("to") or [],
+                "answered_by": answered_by[:8],
                 "lore": lore_url(m["msgid"]),
                 "state": state,
                 "state_detail": detail,

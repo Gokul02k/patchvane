@@ -651,7 +651,7 @@ function cyclePanel() {
       <div class="cyrow">
         <span class="cymark" aria-hidden="true"></span>
         <div class="cytx">
-          <h3>${head}</h3>
+          <h2>${head}</h2>
           <p>${note}</p>
           ${mine ? `<p class="cymine">${mine}</p>` : ""}
         </div>
@@ -1128,8 +1128,90 @@ function discThreads() {
   });
 }
 
+// A maintainer answers from whatever address they read mail at, which is
+// often not the one in MAINTAINERS that the patch was sent to: Takashi
+// Iwai is copied at suse.com and replies from suse.de.  So the name is the
+// key here and the address is only a fallback, with any +tag cut off.
+const samePerson = {
+  name: (n) => (n || "").toLowerCase().replace(/[^a-z]/g, ""),
+  box: (a) => (a || "").split("@")[0].split("+")[0].toLowerCase(),
+};
+
+function askedRows() {
+  const by = new Map();
+  const get = (w) => {
+    const k = samePerson.name(w.name) || w.addr;
+    let r = by.get(k);
+    if (!r) by.set(k, r = { name: w.name, addr: w.addr, asked: 0, back: 0,
+                            elsewhere: 0 });
+    return r;
+  };
+  work().forEach((p) => {
+    const back = p.answered_by || [];
+    const names = new Set(back.map((w) => samePerson.name(w.name)));
+    const boxes = new Set(back.map((w) => samePerson.box(w.addr)));
+    const onCopy = new Set((p.to || []).map((w) => samePerson.name(w.name)
+      || w.addr));
+    (p.to || []).forEach((w) => {
+      const r = get(w);
+      r.asked++;
+      if (names.has(samePerson.name(w.name))
+        || boxes.has(samePerson.box(w.addr))) r.back++;
+    });
+    // Someone reading the list rather than their inbox: Simon Horman
+    // answered seven of these and was on the copy list for none of them.
+    // Without this his row would read "0 of 24" and look like indifference.
+    back.forEach((w) => {
+      if (!onCopy.has(samePerson.name(w.name) || w.addr)) get(w).elsewhere++;
+    });
+  });
+  return [...by.values()].filter((r) => r.asked >= 8)
+    .sort((a, b) => b.asked - a.asked);
+}
+
+// The list below has only people who replied, so a maintainer copied on
+// forty patches who never said a word does not appear in it anywhere.
+// That silence is the thing worth seeing.
+function discAsked() {
+  const rows = askedRows();
+  if (rows.length < 4) return "";
+  const top = rows.slice(0, 12);
+  const quiet = rows.filter((r) => !r.back && !r.elsewhere);
+  const asked = rows.reduce((a, r) => a + r.asked, 0);
+  const back = rows.reduce((a, r) => a + r.back, 0);
+
+  return `<div class="panel" data-reveal>
+    <header><h2>Who answers when you copy them</h2>
+      <span class="sub">${Math.round((back / asked) * 100)}% of asks
+        answered</span></header>
+    <div class="body">
+      ${quiet.length ? `<p class="lede">${plural(quiet.length, "person", "people")}
+        here ${quiet.length === 1 ? "has" : "have"} been copied on
+        ${quiet.reduce((a, r) => a + r.asked, 0)} patches between them and
+        never replied to one.</p>` : ""}
+      <div class="bars welcome">
+        ${top.map((r, i) => `<div class="barrow" data-reveal style="--i:${i}">
+          <span class="nm">${mark(r.name)}</span>
+          <div class="tr"><i style="width:${Math.max((r.back / r.asked) * 100,
+            r.back ? 2 : 0)}%;background:${r.back / r.asked >= 0.4 ? C.green
+              : r.back ? C.amber : C.grey}"></i></div>
+          <span class="vl">${r.back} of ${r.asked}</span>
+          <span class="why">${r.back
+            ? `answered ${Math.round((r.back / r.asked) * 100)}%`
+            : r.elsewhere
+              ? `answered ${r.elsewhere} you did not copy`
+              : "never answered"}</span></div>`).join("")}
+      </div>
+      <p class="foot">Counted from who was on To or Cc against who replied.
+        Some maintainers work from the list rather than their inbox and
+        answer patches they were never copied on, which is what the right
+        hand column says where it does. Only people copied
+        ${WELCOME_FLOOR + 2} times or more.</p>
+    </div></div>`;
+}
+
 function discPeople() {
-  return grid("people", S.data.people, [
+  return discAsked() + grid("people", S.data.people, [
     { key: "name", label: "Person", width: "40%", csv: (r) => r.name,
       render: (r) => `<strong>${mark(r.name)}</strong><div class="sub2">${esc(r.addr)}</div>` },
     { key: "replies", label: "Replies", cls: "num", render: (r) => r.replies },
@@ -1270,6 +1352,61 @@ function subsystemRows() {
   return Object.values(map).sort((a, b) => b.patches - a.patches);
 }
 
+// A rate needs something behind it: one patch that landed is not a
+// subsystem that takes your work, and a list of those would put whatever
+// you happened to send once at the top of the page.
+const WELCOME_FLOOR = 6;
+
+function welcomeRows() {
+  return subsystemRows()
+    .filter((r) => r.patches >= WELCOME_FLOOR)
+    .map((r) => Object.assign({}, r, { in: r.merged + r.next }))
+    .map((r) => Object.assign(r, { rate: r.in / r.patches }))
+    .sort((a, b) => b.rate - a.rate || b.patches - a.patches);
+}
+
+// Sorting the subsystems by how much you sent answers "where have I been
+// working".  This answers the more useful question, which is where that
+// work was wanted -- and the two orders are nothing like each other,
+// because the places you send most are not the places that take most.
+function insWelcome() {
+  const rows = welcomeRows();
+  if (rows.length < 3) return "";
+  const best = rows[0], worst = rows[rows.length - 1];
+  const all = work().length;
+  const landed = work().filter((p) => p.state === "merged"
+    || ["in-next", "in-tree", "accepted", "queued"].includes(p.state)).length;
+
+  const tail = (r) => {
+    if (r.open && r.open >= r.bad) return `${r.open} never answered`;
+    if (r.bad) return `${r.bad} turned down`;
+    return r.review ? `${r.review} still being read` : "";
+  };
+
+  return `<div class="panel wide" data-reveal>
+    <header><h2>Where the work is wanted</h2>
+      <span class="sub">${Math.round((landed / all) * 100)}% of everything
+        lands</span></header>
+    <div class="body">
+      <p class="lede">${esc(best.name)}/ has taken ${best.in} of the
+        ${best.patches} you sent it. ${esc(worst.name)}/ has taken
+        ${worst.in ? `only ${worst.in}` : "none"} of ${worst.patches}.</p>
+      <div class="bars welcome">
+        ${rows.map((r, i) => `<div class="barrow" data-reveal style="--i:${i}">
+          <span class="nm">${esc(r.name)}/</span>
+          <div class="tr"><i style="width:${Math.max(r.rate * 100, r.in ? 2 : 0)}%;
+            background:${r.rate >= 0.6 ? C.green : r.rate >= 0.25 ? C.amber
+              : C.red}"></i></div>
+          <span class="vl">${r.in} of ${r.patches}</span>
+          <span class="why">${tail(r)}</span></div>`).join("")}
+      </div>
+      <p class="foot">Much the same patch does well in some of these and
+        goes nowhere in others, so the difference is the subsystem rather
+        than the work. The bottom of this list is where to send something
+        different, or nothing.</p>
+    </div></div>`;
+}
+
 function insSubsystems() {
   const d = S.data;
   const rows = subsystemRows();
@@ -1278,7 +1415,7 @@ function insSubsystems() {
   const rest = rows.slice(7).reduce((a, b) => a + b.patches, 0);
   if (rest) items.push({ label: "everything else", value: rest, color: C.grey });
 
-  return `<div class="panel" data-reveal>
+  return insWelcome() + `<div class="panel" data-reveal>
       <header><h2>Where your work goes</h2>
         <span class="sub">${plural(rows.length, "subsystem")} touched</span></header>
       <div class="body"><div class="donutwrap">
@@ -3427,12 +3564,20 @@ function viewProfile() {
 function tabs(id, items, initial) {
   if (!S.tabs[id]) S.tabs[id] = initial || items[0][0];
   const on = S.tabs[id];
-  const bar = `<div class="tabs" data-tabs="${esc(id)}" data-reveal>`
+  // Announced as tabs rather than as a row of buttons, which is what they
+  // look like and how they behave.  Only the selected one is in the tab
+  // order; the arrow keys move between them, per the usual pattern.
+  const bar = `<div class="tabs" data-tabs="${esc(id)}" data-reveal
+      role="tablist">`
     + items.map(([k, label]) =>
-      `<button class="${k === on ? "on" : ""}" ${act(TAB, id, k)}>${
+      `<button class="${k === on ? "on" : ""}" role="tab" id="tab-${esc(id)}-${esc(k)}"
+        aria-selected="${k === on}" aria-controls="panel-${esc(id)}"
+        tabindex="${k === on ? 0 : -1}" ${act(TAB, id, k)}>${
         k === on ? `<i class="tabpill"></i>` : ""}<span>${esc(label)}</span>`
       + `</button>`).join("") + `</div>`;
-  return bar + (items.find((i) => i[0] === on) || items[0])[2]();
+  const body = (items.find((i) => i[0] === on) || items[0])[2]();
+  return bar + `<div role="tabpanel" id="panel-${esc(id)}"
+    aria-labelledby="tab-${esc(id)}-${esc(on)}">${body}</div>`;
 }
 
 /* The pill under the tabs is flown from where it was to where it is going,

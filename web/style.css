@@ -665,6 +665,36 @@ svg text { font-family: var(--sans); }
 .tr { height: 8px; border-radius: 20px; background: var(--panel-2); overflow: hidden;
   display: flex; }
 .tr i { height: 100%; display: block; transition: width var(--t-slow) var(--ease); }
+/* Out of the way until it is tabbed to, which is the one moment it is
+   wanted.  Not display:none, which would take it out of the tab order and
+   leave it no way of ever being reached. */
+.skip { position: fixed; top: 10px; left: 10px; z-index: 200;
+  padding: 10px 16px; border-radius: 10px; background: var(--accent);
+  color: #06121f; font-size: 13px; font-weight: 600;
+  text-decoration: none; transform: translateY(-160%);
+  transition: transform var(--t-mid) var(--ease); }
+.skip:focus { transform: translateY(0); outline: 2px solid #fff;
+  outline-offset: 2px; }
+
+/* Ranked by how much of what you sent was taken.  The fourth column says
+   what became of the rest, because "2 of 14" reads very differently when
+   the other twelve were refused than when nobody ever looked. */
+.bars.welcome .barrow { grid-template-columns: 104px 1fr 74px 118px; }
+.barrow .why { color: var(--ink-3); font-size: 11.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.panel .lede { margin: 0 0 14px; font-size: 13.5px; color: var(--ink-2);
+  line-height: 1.55; }
+.panel .foot { margin: 15px 0 0; padding-top: 13px;
+  border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3);
+  line-height: 1.6; }
+
+@media (max-width: 680px) {
+  /* The tail note is the first thing to go: the bar and the count carry
+     the point on their own, and four columns in 320px carries nothing. */
+  .bars.welcome .barrow { grid-template-columns: 82px 1fr 64px; }
+  .barrow .why { display: none; }
+}
+
 .gauge { height: 10px; border-radius: 20px; background: var(--panel-2); overflow: hidden; }
 .gauge i { display: block; height: 100%; border-radius: 20px;
   transition: width var(--t-slow) var(--ease); }
@@ -1730,7 +1760,7 @@ button.link.sm { font-size: 11px; margin-left: 6px; }
 .panel.cycle.open .cymark { background: var(--amber);
   animation: pulse var(--t-loop) infinite; }
 .cytx { flex: 1; min-width: 0; }
-.cytx h3 { margin: 0 0 5px; font-size: 14px; font-weight: 600; }
+.cytx h2 { margin: 0 0 5px; font-size: 14px; font-weight: 600; }
 .cytx p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
 .cymine { margin-top: 8px !important; color: var(--ink-1) !important; }
 .cycount { flex: none; text-align: center; padding-left: 13px;

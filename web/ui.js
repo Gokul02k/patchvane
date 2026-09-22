@@ -75,8 +75,35 @@ function fire(e, want) {
   fn(el, e);
 }
 
+/* A tablist is driven by the arrow keys, not by tabbing through every tab
+   in it.  Home and End go to the ends, which is cheap to support and is
+   what somebody used to the pattern will try. */
+function tabKeys(root) {
+  if (root.tabkeys) return;
+  root.tabkeys = true;
+  root.addEventListener("keydown", (e) => {
+    const tab = e.target.closest('[role="tab"]');
+    if (!tab) return;
+    const all = [...tab.closest('[role="tablist"]').querySelectorAll('[role="tab"]')];
+    const at = all.indexOf(tab);
+    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0,
+                 End: all.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    // Wrapping round the ends rather than stopping dead at them.
+    const next = all[(to + all.length) % all.length];
+    const id = next.id;
+    next.click();
+    // Choosing a tab redraws the panel and the bar with it, so the button
+    // that was just focused is gone by now and focus has fallen back to
+    // the body.  Put it on whatever replaced it.
+    (document.getElementById(id) || next).focus();
+  });
+}
+
 function bindHandlers() {
   foldMotion(document);
+  tabKeys(document);
   document.addEventListener("click", (e) => fire(e, "click"));
   document.addEventListener("change", (e) => fire(e, "change"));
   document.addEventListener("input", (e) => fire(e, "input"));

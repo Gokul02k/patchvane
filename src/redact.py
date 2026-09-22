@@ -123,6 +123,14 @@ class Policy:
                 if self.mask_addresses else patch.get("state_detail", "")
             for tag in patch.get("tags", []):
                 tag["addr"] = self._addr(tag.get("addr", ""))
+            # Who was copied on the posting.  These are maintainers rather
+            # than reviewers, but they are still four hundred addresses in
+            # one machine readable file, which is the thing this module
+            # exists to stop.
+            for who in patch.get("to", []):
+                who["addr"] = self._addr(who.get("addr", ""))
+            for who in patch.get("answered_by", []):
+                who["addr"] = self._addr(who.get("addr", ""))
 
         if not self.include_notes:
             d["notes"] = []

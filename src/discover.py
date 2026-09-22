@@ -39,6 +39,10 @@ import urllib.request
 import html as htmllib
 from datetime import datetime, timezone
 
+# "releases" is the name of the function below that answers for this
+# module, so the import keeps the suffix rather than shadowing it.
+import releases as releases_of
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CONFIG = json.load(open(os.path.join(ROOT, "config.json")))
@@ -305,13 +309,15 @@ def cgit_log(path: str, email: str, limit: int = 100) -> dict:
 # ------------------------------------------------------------- which release
 
 
-TAG = re.compile(r"/tag/\?h=(v[0-9][^']*)'>[^<]*</a>.*?data-ut='(\d+)'", re.S)
+TAG = releases_of.TAG_ROW
+RC = releases_of.RC
 # Release candidates are tags too, and "it shipped in v6.12-rc3" is not what
 # anybody means by which release a commit is in.
+#
+# Wider than releases_of.FINAL on purpose: this one answers which shipped
+# kernel carries a commit, and a commit old enough to have landed in the
+# v2.6 line deserves that answer rather than none.
 FINAL = re.compile(r"^v\d+\.\d+(\.\d+)?$")
-
-
-RC = re.compile(r"^(v\d+\.\d+)-rc\d+$")
 
 
 def releases() -> dict:
@@ -339,8 +345,9 @@ def releases() -> dict:
         # filling, which is where anything merged since the last release is
         # going.  Newest by tag date rather than by version number, which
         # sorts as text and would put v7.10 before v7.9.
-        rcs = sorted(((RC.match(n).group(1), t) for n, t in every
-                      if RC.match(n)), key=lambda x: x[1])
+        rcs = sorted((("v%s.%s" % RC.match(n).group(1, 2), t)
+                      for n, t in every if RC.match(n)),
+                     key=lambda x: x[1])
         return {"final": final, "tags": every_tag,
                 "building": rcs[-1][0] if rcs else ""}
 

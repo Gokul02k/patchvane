@@ -9,6 +9,11 @@
 </head>
 <body>
 
+<!-- The sidebar is fifty tab stops and it is in front of the content on
+     every view, so without this a keyboard gets through it once per page
+     and then does it again. -->
+<a class="skip" href="#view">Skip to content</a>
+
 <div id="bar" class="barload"></div>
 
 <div class="shell">
@@ -111,7 +116,10 @@
   <div class="aiform">
     <div id="aipicker" class="aipicker"></div>
     <div class="airow">
-      <textarea id="aiinput" rows="1" placeholder="Ask about your patches"></textarea>
+      <!-- A placeholder is not a label: it is gone the moment anything is
+           typed, and some readers never announce it at all. -->
+      <textarea id="aiinput" rows="1" aria-label="Ask about your patches"
+                placeholder="Ask about your patches"></textarea>
       <button id="aisend" class="btn primary" title="Send (Enter)">&#10148;</button>
     </div>
   </div>
@@ -130,7 +138,11 @@
   <div id="thbody" class="thbody"></div>
 </aside>
 
-<div id="toast"></div>
+<!-- Toasts are the only confirmation that a save, an export or a failed
+     request happened at all, and a screen reader was never told about any
+     of them.  polite rather than assertive: they are worth hearing, not
+     worth cutting somebody off mid-sentence. -->
+<div id="toast" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <script src="ui.js"></script>
 <script src="help.js"></script>
