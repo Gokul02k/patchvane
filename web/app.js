@@ -1199,7 +1199,7 @@ function discAsked() {
           <span class="why">${r.back
             ? `answered ${Math.round((r.back / r.asked) * 100)}%`
             : r.elsewhere
-              ? `answered ${r.elsewhere} you did not copy`
+              ? `answered ${r.elsewhere} others`
               : "never answered"}</span></div>`).join("")}
       </div>
       <p class="foot">Counted from who was on To or Cc against who replied.

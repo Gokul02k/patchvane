@@ -679,7 +679,7 @@ svg text { font-family: var(--sans); }
 /* Ranked by how much of what you sent was taken.  The fourth column says
    what became of the rest, because "2 of 14" reads very differently when
    the other twelve were refused than when nobody ever looked. */
-.bars.welcome .barrow { grid-template-columns: 104px 1fr 74px 118px; }
+.bars.welcome .barrow { grid-template-columns: 104px 1fr 74px 132px; }
 .barrow .why { color: var(--ink-3); font-size: 11.5px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .panel .lede { margin: 0 0 14px; font-size: 13.5px; color: var(--ink-2);
