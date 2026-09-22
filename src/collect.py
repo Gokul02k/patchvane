@@ -1163,6 +1163,110 @@ def relevant_trees(out: dict) -> set:
     return wanted
 
 
+TAG_ROW = re.compile(r"/tag/\?h=(v[0-9][^']*)'>[^<]*</a>.*?data-ut='(\d+)'",
+                     re.S)
+FINAL_TAG = re.compile(r"^v(\d+)\.(\d+)$")
+RC_TAG = re.compile(r"^v(\d+)\.(\d+)-rc(\d+)$")
+DAY = 86400
+
+
+def next_version(major: int, minor: int) -> str:
+    """What Linus calls the release after this one.
+
+    He has never announced a rule, but he has bumped the major number at
+    the same place every time -- 3.19, 4.20 and 5.19 were each followed by
+    a .0 -- on the stated grounds that he runs out of fingers and toes.
+    Below that the minor simply goes up."""
+    return "v%d.0" % (major + 1) if minor >= 19 else "v%d.%d" % (major, minor)
+
+
+def cycle_shape(tags: list) -> tuple:
+    """How long a release has taken lately, measured rather than assumed.
+
+    Everybody says seven release candidates and two weeks of merge window,
+    and it is usually true, but an -rc8 happens often enough that quoting
+    the folklore would put a date on screen that the tree disagrees with.
+    These come from the last ten releases in the tree being read, so a
+    cycle that is running long says so on its own."""
+    finals = [(n, t) for n, t in tags if FINAL_TAG.match(n)]
+    rc1s = {RC_TAG.match(n).group(1) + "." + RC_TAG.match(n).group(2): t
+            for n, t in tags if RC_TAG.match(n)
+            and RC_TAG.match(n).group(3) == "1"}
+    stabilise, window, rcs = [], [], []
+    for i, (name, when) in enumerate(finals):
+        m = FINAL_TAG.match(name)
+        key = "%s.%s" % (m.group(1), m.group(2))
+        if key in rc1s:
+            stabilise.append(when - rc1s[key])
+            rcs.append(sum(1 for n, _ in tags if RC_TAG.match(n)
+                           and RC_TAG.match(n).group(1) + "."
+                           + RC_TAG.match(n).group(2) == key))
+        # The merge window is the gap between a release and the next -rc1.
+        later = [t for k, t in rc1s.items() if t > when]
+        if later:
+            window.append(min(later) - when)
+
+    def mid(xs, fallback):
+        # The last ten releases, then the middle of those.  Slicing a sorted
+        # list would take the ten longest cycles instead, which is a
+        # different question and answers it too slowly by a fortnight.
+        recent = sorted(xs[-10:])
+        return recent[len(recent) // 2] if recent else fallback
+
+    return (mid(stabilise, 49 * DAY), mid(window, 14 * DAY), mid(rcs, 7))
+
+
+def collect_cycle(f: Fetcher) -> dict:
+    """Where the kernel is in its own release cycle.
+
+    Everything else here is about one person's patches.  This is about the
+    tree they are being sent to, and it is the piece of context that
+    changes what any of it means: during the merge window a maintainer is
+    sending pull requests to Linus rather than reading the list, so silence
+    on a patch is the system working normally and a ping is just noise.  At
+    -rc5 the same silence on the same patch is worth chasing.
+
+    Dates are read off the tags rather than counted forward from a rule,
+    because the rule has exceptions and the tags do not."""
+    cfg = CONFIG.get("korg") or {}
+    mainline = (cfg.get("always") or {}).get("mainline")
+    if not cfg.get("enabled") or not mainline:
+        return {}
+    body = f.get("%s%s/refs/tags/" % (cfg["base"], mainline), timeout=90,
+                 ttl=6 * 3600)
+    if not body:
+        return {}
+    tags = sorted(((n, int(t)) for n, t in TAG_ROW.findall(body)),
+                  key=lambda x: x[1])
+    tags = [(n, t) for n, t in tags if FINAL_TAG.match(n) or RC_TAG.match(n)]
+    if not tags:
+        return {}
+
+    stabilise, window, rcs = cycle_shape(tags)
+    name, when = tags[-1]
+    day = lambda ts: time.strftime("%Y-%m-%d", time.gmtime(ts))
+    out = {"tag": name, "tagged": day(when), "rcs_usual": rcs,
+           "estimated": True}
+
+    rc = RC_TAG.match(name)
+    if rc:
+        # Stabilising one release, which means the window for the next one
+        # opens when this one ships.
+        major, minor, n = (int(x) for x in rc.groups())
+        rc1 = next((t for m, t in tags
+                    if m == "v%d.%d-rc1" % (major, minor)), when)
+        out.update({"phase": "rc", "version": "v%d.%d" % (major, minor),
+                    "rc": n, "next": next_version(major, minor + 1),
+                    "opens": day(rc1 + stabilise),
+                    "closes": day(rc1 + stabilise + window)})
+    else:
+        major, minor = (int(x) for x in FINAL_TAG.match(name).groups())
+        out.update({"phase": "merge-window", "version": name, "rc": 0,
+                    "next": next_version(major, minor + 1),
+                    "opens": day(when), "closes": day(when + window)})
+    return out
+
+
 def collect_korg(f: Fetcher, out: dict, quick: bool = False,
                  everything: bool = False) -> None:
     """Two questions, answered two different ways.
@@ -2446,6 +2550,19 @@ def main() -> int:
             "changed": brain.changed,
             "error": brain.failed,
         }
+    # One cached request, and it is what tells the reader whether the quiet
+    # on their patches means anything.
+    try:
+        cycle = collect_cycle(f)
+    except Exception as exc:                        # never lose a run to it
+        cycle = {}
+        log("release cycle: %s" % exc)
+    if cycle:
+        data["cycle"] = cycle
+        log("kernel: %s, %s" % (cycle["tag"],
+                                "merge window open" if cycle["phase"]
+                                == "merge-window" else "merge window shut"))
+
     data["collect_seconds"] = round(time.time() - t0, 1)
     data["sources"]["cache"] = {"hits": f.hits, "misses": f.misses,
                                 "errors": f.errors, "stale": f.stale_hits}

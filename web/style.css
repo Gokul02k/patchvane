@@ -704,6 +704,29 @@ svg text { font-family: var(--sans); }
 .notecard p { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.55; }
 .notecard .next { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
 
+/* One send-email run that nobody answered.  The left edge carries the
+   verdict, so a page of these can be read down the margin without reading
+   any of them. */
+.quietrun { padding: 14px 16px 13px; border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent; }
+.quietrun:last-child { border-bottom: 0; }
+.quietrun.ripe { border-left-color: var(--amber); }
+.quietrun.hold, .quietrun.early { border-left-color: var(--line); }
+.qhead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  row-gap: 6px; font-size: 12.5px; }
+.qhead b { font-size: 13px; }
+.qhead .muted { font-size: 12px; }
+.qwhy { margin: 7px 0 0; font-size: 12.5px; line-height: 1.6;
+  color: var(--ink-3); }
+.qadvice { margin: 0; padding: 0 16px 13px; border-bottom: 1px solid var(--line); }
+.qlist { list-style: none; margin: 9px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 3px; }
+.qlist li { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.qlist a { color: var(--ink-2); }
+.qlist a:hover { color: var(--ink-1); }
+.qmore { color: var(--ink-3); font-size: 12px; }
+
 .listrow { display: flex; align-items: center; gap: 9px; padding: 7px 16px;
   font-size: 12.5px; border-bottom: 1px solid var(--line); }
 .listrow:last-child { border-bottom: 0; }
@@ -1692,6 +1715,42 @@ button.link.sm { font-size: 11px; margin-left: 6px; }
 .panel.warn { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); }
 .panel.warn .body { background: color-mix(in srgb, var(--amber) 6%, transparent); }
 
+/* ------------------------------------------------------- the release cycle */
+/* Tinted rather than plain, because it is context for the page and not
+   another count on it: amber while the merge window is open and nothing is
+   moving, blue while review is running and silence means something. */
+.panel.cycle .body { padding: 0; }
+.panel.cycle.shut { border-color: color-mix(in srgb, var(--blue) 34%, var(--line)); }
+.panel.cycle.shut .body { background: color-mix(in srgb, var(--blue) 6%, transparent); }
+.panel.cycle.open { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); }
+.panel.cycle.open .body { background: color-mix(in srgb, var(--amber) 7%, transparent); }
+.cyrow { display: flex; align-items: flex-start; gap: 13px; padding: 15px 17px; }
+.cymark { flex: none; width: 9px; height: 9px; border-radius: 50%;
+  margin-top: 5px; background: var(--blue); }
+.panel.cycle.open .cymark { background: var(--amber);
+  animation: pulse var(--t-loop) infinite; }
+.cytx { flex: 1; min-width: 0; }
+.cytx h3 { margin: 0 0 5px; font-size: 14px; font-weight: 600; }
+.cytx p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
+.cymine { margin-top: 8px !important; color: var(--ink-1) !important; }
+.cycount { flex: none; text-align: center; padding-left: 13px;
+  border-left: 1px solid var(--line); align-self: stretch;
+  display: flex; flex-direction: column; justify-content: center; }
+.cycount b { display: block; font-size: 26px; font-weight: 600;
+  line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--blue); }
+.cycount i { display: block; margin-top: 3px; font-style: normal;
+  font-size: 10.5px; line-height: 1.35; color: var(--ink-3); }
+
+@media (max-width: 680px) {
+  .cyrow { flex-wrap: wrap; padding: 13px 14px; }
+  .cycount { border-left: 0; border-top: 1px solid var(--line);
+    padding: 10px 0 0; margin-top: 11px; width: 100%;
+    flex-direction: row; align-items: baseline; justify-content: flex-start;
+    gap: 8px; text-align: left; }
+  .cycount i { margin-top: 0; }
+  .cycount i br { display: none; }
+}
+
 /* The wait while somebody's patches are collected for the first time. */
 .empty.tall { padding: 60px 24px; }
 .empty.tall h3 { margin: 18px 0 10px; font-size: 17px; font-weight: 600; }
@@ -1974,7 +2033,7 @@ table.plain tr.main:hover, table.plain tr.main:hover + tr.sub {
 .thmsg > summary b { min-width: 0; overflow-wrap: break-word; }
 .thmsg > summary .pill { flex: none; }
 .thmsg > summary .thdim { flex: none; white-space: nowrap; }
-.thmsg pre { margin: 0; padding: 12px 14px; overflow-x: auto;
+.thmsg .msgbody pre { margin: 0; padding: 12px 14px; overflow-x: auto;
   font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
   word-break: break-word; font-family: var(--mono, ui-monospace, monospace); }
 .thlink { margin: 0; padding: 0 14px 11px; font-size: 12px; }

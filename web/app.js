@@ -565,6 +565,7 @@ function viewOverview() {
 
   return `
   ${shortfall}
+  ${cyclePanel()}
   ${roadPanel()}
   ${stalePanel()}
   ${ledgerPanel(book, work().length)}
@@ -605,6 +606,82 @@ function viewOverview() {
    it, and each stage that lost something says so and opens those instead,
    so "dropped" is answerable at the point it happened rather than as one
    number at the bottom of the page. */
+/* Where the kernel is in its own cycle, and what that means for the patches
+   on this page.
+
+   Nothing else here is about the tree rather than the person, but this is
+   what decides how to read everything else.  A patch that has sat unanswered
+   for a fortnight is a worry at -rc5 and is simply the calendar during the
+   merge window, when maintainers are sending pull requests to Linus and not
+   reading the list.  Told the date and left to work that out, nobody does. */
+function cyclePanel() {
+  const c = S.data.cycle;
+  if (!c || !c.phase) return "";
+  const window = c.phase === "merge-window";
+  const opens = days(c.opens);
+  const queued = (S.data.merged || []).filter(
+    (m) => m.in_next && !m.mainline).length;
+
+  let head, note;
+  if (window) {
+    head = `The ${esc(c.next)} merge window is open.`;
+    note = `Maintainers are sending pull requests to Linus, not reading the
+      list. Quiet on anything you posted is the calendar, not a snub, and a
+      ping now lands in the worst possible week. It shuts
+      ${when(c.closes)}${c.estimated ? " or thereabouts" : ""}.`;
+  } else {
+    head = `${esc(c.tag)}. The merge window is shut.`;
+    note = `${esc(c.version)} is being stabilised, so maintainers are taking
+      fixes for it and queueing everything else for ${esc(c.next)}. Review is
+      running normally: silence on a patch this week is worth chasing.`;
+  }
+
+  /* What their own work is waiting for, in the same breath.  The count is
+     the whole point -- "the merge window opens on the 18th" is trivia until
+     it is 109 of your own commits moving. */
+  const mine = queued
+    ? `${plural(queued, "commit")} of yours ${queued === 1 ? "is" : "are"}
+       sitting in linux-next. ${queued === 1 ? "It reaches" : "They reach"}
+       mainline when the ${esc(c.next)} merge window opens${
+         window ? " \u2014 which is now" : `, ${when(c.opens)}`}.`
+    : "";
+
+  return `<div class="panel wide cycle ${window ? "open" : "shut"}" data-reveal>
+    <div class="body">
+      <div class="cyrow">
+        <span class="cymark" aria-hidden="true"></span>
+        <div class="cytx">
+          <h3>${head}</h3>
+          <p>${note}</p>
+          ${mine ? `<p class="cymine">${mine}</p>` : ""}
+        </div>
+        ${!window && opens !== null ? `<div class="cycount">
+          <b>${opens}</b><i>days until<br>${esc(c.next)} opens</i></div>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Whole days from today to a yyyy-mm-dd, or null if it is not one. */
+function days(iso) {
+  if (!iso) return null;
+  const then = Date.parse(iso + "T00:00:00Z");
+  if (isNaN(then)) return null;
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((then - today) / 86400000);
+}
+
+/* "on 18 October", or "next week" when that is the more useful of the two. */
+function when(iso) {
+  const n = days(iso);
+  if (n === null) return "";
+  if (n <= 0) return "any day now";
+  if (n <= 10) return `in ${plural(n, "day")}`;
+  return "on " + new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, {
+    day: "numeric", month: "long", timeZone: "UTC" });
+}
+
 function roadPanel() {
   const stages = road();
   const top = stages[0].through || 1;
@@ -1346,6 +1423,82 @@ function insNumbers() {
 /* What you owe the lists, as against what the lists owe you.  Two kinds:
    a thread where someone asked you something last, and a series where the
    answer was "change this", which means a new version is due. */
+/* Patches nobody has said anything about, gathered by the run that sent
+   them.
+
+   Sorting these by age gives a list that reads as a hundred and nine
+   separate failures when it is one: a send-email run goes out in a single
+   afternoon, and every patch in it is the same age, waiting on the same
+   silence, needing the same one decision. Grouped by the day they left,
+   that is what it looks like -- a handful of sends, each either ripe for a
+   ping or not yet. */
+function quietWork() {
+  const rows = work().filter((p) => !CLOSED.includes(p.state));
+  const sent = new Map();                    // day -> how many went out
+  rows.forEach((p) => {
+    const d = (p.date || "").slice(0, 10);
+    if (d) sent.set(d, (sent.get(d) || 0) + 1);
+  });
+
+  const runs = new Map();
+  rows.filter((p) => reached(p) === 0).forEach((p) => {
+    const d = (p.date || "").slice(0, 10);
+    if (!d) return;
+    let g = runs.get(d);
+    if (!g) runs.set(d, g = { day: d, patches: [], lists: new Set() });
+    g.patches.push(p);
+    const where = treeOf(p);
+    if (where && where !== "unspecified") g.lists.add(where);
+  });
+
+  return [...runs.values()].map((g) => ({
+    ...g,
+    age: -days(g.day),
+    sent: sent.get(g.day) || g.patches.length,
+    lists: [...g.lists].sort(),
+  })).sort((a, b) => b.age - a.age);
+}
+
+/* Kernel custom is to leave a fortnight before nudging, and the merge
+   window suspends even that: for those two weeks maintainers are sending
+   pull requests to Linus, so nobody is ignoring anything. */
+const PING_AFTER = 14;
+
+/* The verdict on one run, and a few words only where those words differ
+   from the run above. Why a ping is the right move is the same paragraph
+   for every ripe send, so it is said once over the list rather than six
+   times down it. */
+function pingVerdict(run) {
+  const c = S.data.cycle || {};
+  if (c.phase === "merge-window") return ["hold", "Wait", ""];
+  if (run.age < PING_AFTER) {
+    return ["early", "Too early",
+            `${plural(PING_AFTER - run.age, "day")} to go.`];
+  }
+  return ["ripe", "Worth a ping", ""];
+}
+
+/* The advice itself, once, above the list. */
+function pingAdvice(runs) {
+  const c = S.data.cycle || {};
+  const ripe = runs.filter((r) => pingVerdict(r)[0] === "ripe").length;
+  if (c.phase === "merge-window") {
+    return `The ${esc(c.next || "next")} merge window is open, which is the one
+      fortnight where silence means nothing at all: maintainers are sending
+      pull requests to Linus rather than reading the list. Let it shut${
+        c.closes ? " " + when(c.closes) : ""} before reading anything into
+      these.`;
+  }
+  if (!ripe) {
+    return `Kernel custom is to leave a week or two before nudging, and
+      nothing here has waited that long yet.`;
+  }
+  return `${c.tag ? esc(c.tag) + ", so review is running normally and this is "
+    : "This is "}silence rather than the calendar. The custom is to nudge by
+    replying to your own posting on the list, not by sending the patches
+    again.`;
+}
+
 function owedWork() {
   const d = S.data;
   const byId = new Map(d.series.map((s) => [s.id, s]));
@@ -1415,8 +1568,60 @@ function viewOwed() {
      () => owedReplies(owed)],
     ["respin", `New versions (${owed.respin.series.length})`,
      () => owedRespins(owed)],
+    ["quiet", `No reply (${quietWork().length})`, owedQuiet],
     ["notes", `Your notes (${(S.data.notes || []).length})`, owedNotes],
   ]);
+}
+
+function owedQuiet() {
+  const runs = quietWork();
+  if (!runs.length) {
+    return `<div class="panel" data-reveal><div class="empty">
+      <div class="emptyicon">\u2713</div>
+      <p>Everything you have posted has had an answer of some kind.</p>
+      </div></div>`;
+  }
+  const ripe = runs.filter((r) => pingVerdict(r)[0] === "ripe");
+  const cards = runs.map((run, i) => {
+    const [cls, head, why] = pingVerdict(run);
+    const n = run.patches.length;
+    const rows = run.patches.slice(0, 6).map((p) => `<li>
+      ${subj(p.msgid || p.key, p.raw_subject || p.subject)}</li>`).join("");
+    const more = n - 6;
+    return `<div class="quietrun ${cls}" data-reveal style="--i:${i}">
+      <div class="qhead">
+        <span class="pill ${cls === "ripe" ? "amber" : "grey"}">${esc(head)}</span>
+        <b>${esc(longDay(run.day))}</b>
+        <span class="muted">${plural(run.age, "day")} ago</span>
+        <span class="spacer"></span>
+        <span class="muted">${run.lists.slice(0, 3).map(esc).join(", ")}${
+          run.lists.length > 3 ? ` +${run.lists.length - 3}` : ""}</span>
+      </div>
+      <p class="qwhy">${n === run.sent
+        ? `${n === 1 ? "The one patch" : `All ${n} patches`} sent that day,
+           still unanswered.`
+        : `${n} of the ${plural(run.sent, "patch", "patches")} sent that day,
+           still unanswered.`}${why ? " " + why : ""}</p>
+      <ul class="qlist">${rows}${more > 0
+        ? `<li class="qmore">and ${more} more</li>` : ""}</ul>
+    </div>`;
+  }).join("");
+
+  return `<div class="panel" data-reveal>
+    <header><h2>Nobody has answered</h2>
+      <span class="sub">${plural(runs.length, "send")}, oldest first${
+        ripe.length ? ` \u00b7 ${ripe.length} worth a ping` : ""}</span>
+    </header>
+    <p class="hint qadvice">${pingAdvice(runs)}</p>
+    <div class="body flush">${cards}</div></div>`;
+}
+
+/* "4 September", or with the year once it is no longer this one. */
+function longDay(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  const opts = { day: "numeric", month: "long", timeZone: "UTC" };
+  if (d.getUTCFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
 }
 
 function owedReplies(owed) {
@@ -3745,9 +3950,11 @@ function conversation(msgs, why) {
         <span class="spacer"></span>
         <span class="thdim">${esc(ago(m.date))}</span>
       </summary>
-      <pre>${esc(trimQuotes(m.body || ""))}</pre>
-      ${m.lore ? `<p class="thlink"><a href="${esc(m.lore)}" target="_blank"
-        rel="noreferrer">this message on lore \u2197</a></p>` : ""}
+      <div class="msgbody">
+        <pre>${esc(trimQuotes(m.body || ""))}</pre>
+        ${m.lore ? `<p class="thlink"><a href="${esc(m.lore)}" target="_blank"
+          rel="noreferrer">this message on lore \u2197</a></p>` : ""}
+      </div>
     </details>`).join("")}</div></section>`;
 }
 

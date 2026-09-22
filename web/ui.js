@@ -76,6 +76,7 @@ function fire(e, want) {
 }
 
 function bindHandlers() {
+  foldMotion(document);
   document.addEventListener("click", (e) => fire(e, "click"));
   document.addEventListener("change", (e) => fire(e, "change"));
   document.addEventListener("input", (e) => fire(e, "input"));
@@ -115,6 +116,63 @@ function motion(time, curve) {
 function transition(paint) {
   if (!MOTION.ok || !document.startViewTransition) { paint(); return; }
   document.startViewTransition(paint);
+}
+
+/* The same scale as motion(), split for the Web Animations API, which wants
+   a number of milliseconds and a curve rather than one CSS shorthand. */
+function motionParts(time, curve) {
+  const css = getComputedStyle(document.documentElement);
+  const t = css.getPropertyValue("--t-" + (time || "base")).trim() || ".24s";
+  return [t.endsWith("ms") ? parseFloat(t) : parseFloat(t) * 1000,
+          css.getPropertyValue("--ease" + (curve ? "-" + curve : "")).trim()
+            || "ease-out"];
+}
+
+/* <details> is the right element for a fold and has no motion of its own:
+   it is showing its content or it is not, with no state in between for the
+   browser to animate.  So the height is measured and animated here.
+
+   It has to be the click rather than the toggle event.  By the time toggle
+   arrives the content is already in or already gone, and a close in
+   particular has to be held back -- the element must keep rendering its
+   content until the animation showing it leave has finished, and only then
+   actually shut. */
+function foldMotion(root) {
+  /* Bound twice, every fold would open on the first handler and shut again
+     on the second, which looks exactly like the fold not working at all. */
+  if (root.foldbound) return;
+  root.foldbound = true;
+  root.addEventListener("click", (e) => {
+    const sum = e.target.closest("summary");
+    if (!sum) return;
+    /* A link inside the header is doing its own job, not toggling. */
+    if (e.target.closest("a, button")) return;
+    const d = sum.parentElement;
+    if (!d || d.tagName !== "DETAILS") return;
+    const body = d.querySelector(":scope > .fbody, :scope > .msgbody");
+    if (!body || !MOTION.ok) return;
+    e.preventDefault();
+    slideFold(d, body, !d.open);
+  });
+}
+
+function slideFold(d, body, open) {
+  if (body.anim) body.anim.cancel();
+  const [ms, ease] = motionParts("fast");
+  /* Measuring only works while it is being rendered, so an opening fold is
+     opened first and animated from nothing up to what it turned out to be. */
+  if (open) d.open = true;
+  const h = body.scrollHeight;
+  body.style.overflow = "hidden";
+  body.anim = body.animate(
+    [{ height: (open ? 0 : h) + "px", opacity: open ? 0 : 1 },
+     { height: (open ? h : 0) + "px", opacity: open ? 1 : 0 }],
+    { duration: ms, easing: ease });
+  body.anim.onfinish = () => {
+    body.anim = null;
+    body.style.overflow = "";
+    if (!open) d.open = false;
+  };
 }
 
 /* Something that is in two places at once: on screen now, and somewhere
