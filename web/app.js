@@ -1568,7 +1568,10 @@ function viewOwed() {
      () => owedReplies(owed)],
     ["respin", `New versions (${owed.respin.series.length})`,
      () => owedRespins(owed)],
-    ["quiet", `No reply (${quietWork().length})`, owedQuiet],
+    /* Counted in sends, and said so.  The ledger on the overview counts the
+       same silence in patches, and two different numbers both labelled "no
+       reply" read as one of them being wrong. */
+    ["quiet", `No reply (${plural(quietWork().length, "send")})`, owedQuiet],
     ["notes", `Your notes (${(S.data.notes || []).length})`, owedNotes],
   ]);
 }
@@ -1598,8 +1601,8 @@ function owedQuiet() {
           run.lists.length > 3 ? ` +${run.lists.length - 3}` : ""}</span>
       </div>
       <p class="qwhy">${n === run.sent
-        ? `${n === 1 ? "The one patch" : `All ${n} patches`} sent that day,
-           still unanswered.`
+        ? `${n === 1 ? "The one patch" : n === 2 ? "Both patches"
+            : `All ${n} patches`} sent that day, still unanswered.`
         : `${n} of the ${plural(run.sent, "patch", "patches")} sent that day,
            still unanswered.`}${why ? " " + why : ""}</p>
       <ul class="qlist">${rows}${more > 0
