@@ -1635,7 +1635,7 @@ function answerPanel(r) {
     </header>
     <div class="body">
       <p class="quoted">${esc(r.text)}</p>
-      ${(r.answers || []).length ? `<div class="mine">${
+      ${(r.answers || []).length ? `<div class="answered">${
         r.answers.map((a) => `<div class="mreply">
           <strong>${esc(fbStatus(a.status)[0])}</strong>
           ${a.note ? `<p>${esc(a.note)}</p>` : ""}
@@ -2054,7 +2054,7 @@ function feedbackPanel() {
 function myReports(s) {
   const rows = s.mine || [];
   if (!rows.length) return "";
-  return `<div class="mine">
+  return `<div class="answered">
     <h3>What you have sent</h3>
     ${rows.map((r) => {
       const [said, cls] = fbStatus(r.status);
@@ -3721,13 +3721,22 @@ function conversation(msgs, why) {
       <p class="hint">${esc(why || "Nothing came back on this one yet.")}</p>
       </section>`;
   }
+  /* The newest message is the one that was come for: it is what somebody
+     said last and what any answer has to answer. The rest is history, and a
+     thread that ran to nine rounds buries it under eight of them. So the
+     last one is open and the others are shut, each still showing who wrote
+     it and when, which is all that is needed to decide to open one. */
+  const last = msgs.length - 1;
   return `<section class="thsec"><h3>The conversation
     <span class="thdim">${msgs.length} message${msgs.length > 1 ? "s" : ""}</span>
+    ${msgs.length > 1 ? `<span class="spacer"></span>
+      <button class="link sm" ${act(openEveryMessage)}>expand all</button>` : ""}
     </h3>
     ${why ? `<p class="hint">${esc(why)}</p>` : ""}
-    <div class="thmsgs">${msgs.map((m) => `<article class="thmsg${
-      m.mine ? " mine" : ""}${m.bot ? " bot" : ""}">
-      <header>
+    <div class="thmsgs">${msgs.map((m, i) => `<details class="thmsg${
+      m.mine ? " mine" : ""}${m.bot ? " bot" : ""}"${i === last ? " open" : ""}>
+      <summary>
+        <span class="fmark" aria-hidden="true"></span>
         <b>${esc(m.who || "somebody")}</b>
         ${m.mine ? '<span class="pill grey">you</span>' : ""}
         ${m.bot ? '<span class="pill grey">bot</span>' : ""}
@@ -3735,11 +3744,19 @@ function conversation(msgs, why) {
         ${(m.tags || []).map((t) => `<span class="pill blue">${esc(t)}</span>`).join("")}
         <span class="spacer"></span>
         <span class="thdim">${esc(ago(m.date))}</span>
-        ${m.lore ? `<a href="${esc(m.lore)}" target="_blank"
-          rel="noreferrer" title="this message on lore">\u2197</a>` : ""}
-      </header>
+      </summary>
       <pre>${esc(trimQuotes(m.body || ""))}</pre>
-    </article>`).join("")}</div></section>`;
+      ${m.lore ? `<p class="thlink"><a href="${esc(m.lore)}" target="_blank"
+        rel="noreferrer">this message on lore \u2197</a></p>` : ""}
+    </details>`).join("")}</div></section>`;
+}
+
+function openEveryMessage(el) {
+  const box = el.closest(".thsec");
+  const all = [...box.querySelectorAll("details.thmsg")];
+  const shut = all.some((d) => !d.open);
+  all.forEach((d) => { d.open = shut; });
+  el.textContent = shut ? "collapse all" : "expand all";
 }
 
 /* A reply that quotes the whole patch back is mostly the patch.  Keep the
